@@ -51,15 +51,33 @@ static WBBubbleDirection WBDirectionForAvatarView(UIView *avatarView, UIView *ce
     return WBBubbleDirectionUnknown;
 }
 
-static BOOL WBValidTextBubble(UIView *bubbleView, UIView *textView) {
+static BOOL WBValidTextBubble(UIView *bubbleView, UIView *textView, WBBubbleDirection direction) {
     Class backgroundClass = NSClassFromString(@"YYAsyncImageView");
     Class textClass = NSClassFromString(@"RichTextView");
     if (!backgroundClass || !textClass || !bubbleView || !textView || ![bubbleView isKindOfClass:backgroundClass] || ![textView isKindOfClass:textClass]) {
         return NO;
     }
-    CGFloat widthPadding = CGRectGetWidth(bubbleView.bounds) - CGRectGetWidth(textView.bounds);
-    CGFloat heightPadding = CGRectGetHeight(bubbleView.bounds) - CGRectGetHeight(textView.bounds);
-    return CGRectGetWidth(bubbleView.bounds) > 0.0 && CGRectGetHeight(bubbleView.bounds) > 0.0 && widthPadding >= 12.0 && widthPadding <= 60.0 && heightPadding >= 10.0 && heightPadding <= 50.0;
+    CGFloat width = CGRectGetWidth(bubbleView.bounds);
+    CGFloat height = CGRectGetHeight(bubbleView.bounds);
+    CGFloat widthPadding = width - CGRectGetWidth(textView.bounds);
+    CGFloat heightPadding = height - CGRectGetHeight(textView.bounds);
+    if (width < 30.0 || height < 30.0 || widthPadding < 12.0 || widthPadding > 60.0 || heightPadding < 10.0 || heightPadding > 50.0) {
+        return NO;
+    }
+    if ([textView isDescendantOfView:bubbleView]) {
+        CGRect textRect = [textView convertRect:textView.bounds toView:bubbleView];
+        CGRect safeRect = CGRectInset(bubbleView.bounds, 4.0, 3.0);
+        if (direction == WBBubbleDirectionIncoming) {
+            safeRect.origin.x += 5.0;
+            safeRect.size.width -= 5.0;
+        } else {
+            safeRect.size.width -= 5.0;
+        }
+        if (!CGRectContainsRect(safeRect, textRect)) {
+            return NO;
+        }
+    }
+    return YES;
 }
 
 static void WBClearStyle(id object, UIView *bubbleView) {
@@ -86,7 +104,7 @@ static void WBApplyStyle(id object) {
     if (previousBubble && previousBubble != bubbleView) {
         [WBBubbleStyler removeFromBubbleView:previousBubble];
     }
-    if (![WBBubbleThemeProvider isEnabled] || direction == WBBubbleDirectionUnknown || !WBValidTextBubble(bubbleView, textView)) {
+    if (![WBBubbleThemeProvider isEnabled] || direction == WBBubbleDirectionUnknown || !WBValidTextBubble(bubbleView, textView, direction)) {
         WBClearStyle(object, bubbleView);
         return;
     }
@@ -98,6 +116,9 @@ static void WBApplyStyle(id object) {
 }
 
 static void WBLayoutContentViewHook(id object, SEL selector) {
+    if (!WBOriginalLayoutContentView) {
+        return;
+    }
     WBOriginalLayoutContentView(object, selector);
     WBApplyStyle(object);
 }
@@ -105,8 +126,13 @@ static void WBLayoutContentViewHook(id object, SEL selector) {
 @implementation WBTextBubbleStyleHook
 
 + (BOOL)install {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    if (WBHookInstalled) {
+        return YES;
+    }
+    @synchronized (self) {
+        if (WBHookInstalled) {
+            return YES;
+        }
         Class cellClass = NSClassFromString(@"TextMessageCellView");
         Class backgroundClass = NSClassFromString(@"YYAsyncImageView");
         Class textClass = NSClassFromString(@"RichTextView");
@@ -114,11 +140,11 @@ static void WBLayoutContentViewHook(id object, SEL selector) {
         Method method = cellClass ? class_getInstanceMethod(cellClass, selector) : NULL;
         BOOL selectorsAvailable = cellClass && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getBgImageView")] && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getRichTextView")] && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getHeadImageView")];
         if (!method || !backgroundClass || !textClass || !selectorsAvailable) {
-            return;
+            return NO;
         }
         MSHookMessageEx(cellClass, selector, (IMP)WBLayoutContentViewHook, (IMP *)&WBOriginalLayoutContentView);
         WBHookInstalled = WBOriginalLayoutContentView != NULL;
-    });
+    }
     return WBHookInstalled;
 }
 

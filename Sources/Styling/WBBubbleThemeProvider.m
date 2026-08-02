@@ -11,7 +11,7 @@
 }
 
 + (NSString *)themeIdentifier {
-    return @"stage03-fixed-v1";
+    return @"stage03-fixed-v2";
 }
 
 + (UIColor *)fillColorForDirection:(WBBubbleDirection)direction traitCollection:(UITraitCollection *)traitCollection {
@@ -31,11 +31,11 @@
 }
 
 + (CGFloat)fillOpacity {
-    return 0.96;
+    return 1.0;
 }
 
 + (CGFloat)cornerRadius {
-    return 12.0;
+    return 5.0;
 }
 
 + (CGFloat)borderWidth {

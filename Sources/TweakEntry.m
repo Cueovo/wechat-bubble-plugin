@@ -8,12 +8,11 @@
 
 NSString * const WeChatBubbleBuildStage = @"text-bubble-core";
 
-static void WBRunBootstrap(void) {
+static void WBRunBootstrap(BOOL hookInstalled) {
     if (![WBProcessGuard isWeChatMainProcess]) {
         return;
     }
     BOOL activationAllowed = [WBVersionGate allowsUIModification];
-    BOOL hookInstalled = activationAllowed && [WBTextBubbleStyleHook install];
     NSMutableDictionary<NSString *, id> *styling = [[WBTextBubbleStyleHook configurationSnapshot] mutableCopy];
     styling[@"activationAllowed"] = @(activationAllowed);
     styling[@"hookInstalled"] = @(hookInstalled);
@@ -26,7 +25,7 @@ static void WBRunBootstrap(void) {
     }
     NSDictionary<NSString *, id> *snapshot = @{
         @"diagnosticsFormat": @4,
-        @"pluginVersion": @"0.1.0",
+        @"pluginVersion": @"0.1.1",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],
@@ -46,15 +45,37 @@ static void WBRunBootstrap(void) {
     NSLog(@"[WeChatBubble] bootstrap=%@ diagnostics=%@", fileURL ? @"complete" : @"failed", fileURL.lastPathComponent ?: @"");
 }
 
+static void WBAttemptInstallAndBootstrap(NSUInteger attempt) {
+    if (![WBVersionGate allowsUIModification]) {
+        WBRunBootstrap(NO);
+        return;
+    }
+    BOOL hookInstalled = [WBTextBubbleStyleHook install];
+    if (hookInstalled || attempt >= 5) {
+        WBRunBootstrap(hookInstalled);
+        return;
+    }
+    static const NSTimeInterval delays[] = {0.05, 0.1, 0.2, 0.4, 0.8};
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[attempt] * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        WBAttemptInstallAndBootstrap(attempt + 1);
+    });
+}
+
 __attribute__((constructor))
 static void WBInitialize(void) {
     @autoreleasepool {
+        if (![WBProcessGuard isWeChatMainProcess]) {
+            return;
+        }
+        BOOL hookInstalled = [WBVersionGate allowsUIModification] && [WBTextBubbleStyleHook install];
         dispatch_async(dispatch_get_main_queue(), ^{
             static dispatch_once_t onceToken;
             dispatch_once(&onceToken, ^{
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                    WBRunBootstrap();
-                });
+                if (hookInstalled) {
+                    WBRunBootstrap(YES);
+                } else {
+                    WBAttemptInstallAndBootstrap(0);
+                }
             });
         });
     }
