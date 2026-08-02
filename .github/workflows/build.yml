@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
 
@@ -46,12 +46,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --filter=blob:none --no-checkout https://github.com/theos/theos.git "$THEOS"
+          git clone --no-checkout https://github.com/theos/theos.git "$THEOS"
           git -C "$THEOS" checkout "$THEOS_COMMIT"
-          git -C "$THEOS" submodule update --init --recursive --depth 1
+          git -C "$THEOS" submodule update --init --recursive
           echo "theos_commit=$(git -C "$THEOS" rev-parse HEAD)" | tee -a build-manifest.txt
-          ldid -v 2>&1 | head -n 1 | sed 's/^/ldid=/' | tee -a build-manifest.txt
-          dpkg-deb --version | head -n 1 | sed 's/^/dpkg_deb=/' | tee -a build-manifest.txt
+          brew list --versions ldid xz dpkg | tee -a build-manifest.txt
 
       - name: Build rootless package
         shell: bash
@@ -74,7 +73,7 @@ jobs:
           shasum -a 256 "$package" | tee SHA256SUMS
 
       - name: Upload package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
           name: wechat-bubble-rootless-${{ github.sha }}
           path: |
