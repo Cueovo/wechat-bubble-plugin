@@ -13,9 +13,9 @@
 | iOS | 16.5 | 已确认 |
 | 越狱 | Dopamine 2.4.9 RootHide | 已确认 |
 | Tweak Loader | ElleKit 1.2 | 已确认 |
-| 微信 | 8.0.60 | 已确认，`CFBundleVersion` 待真机读取 |
-| Bundle ID | `com.tencent.xin` | 用户已提供 |
-| 主可执行文件 | 未确认 | 待真机确认 |
+| 微信 | 8.0.60 (`CFBundleVersion` `8.0.60.35`) | 0.0.2 诊断已确认 |
+| Bundle ID | `com.tencent.xin` | 0.0.2 诊断已确认 |
+| 主可执行文件 | `WeChat` | 0.0.2 诊断已确认 |
 | Artifact 安装 | Sileo/Filza 手工安装 | 0.0.1 经 RootHide Patcher Convert 后安装成功；原生包待验证 |
 
 ## GitHub/CI 基线
@@ -71,7 +71,7 @@
 - [x] 完成普通 rootless 0.0.1 经 Convert 后的首次安装和微信启动验证。
 - [ ] 完成原生 RootHide 0.0.2 无需 Convert 的安装和卸载验证。
 - [x] 确认微信 Bundle ID 为 `com.tencent.xin`。
-- [ ] 确认微信 `CFBundleVersion` 和主可执行文件。
+- [x] 确认微信 `CFBundleVersion` 为 `8.0.60.35`、主可执行文件为 `WeChat`。
 - [x] 由 CI 构建并上传普通 rootless 0.0.1 基线 artifact。
 - [x] 由 CI 构建并上传原生 RootHide 0.0.2 诊断 artifact。
 - [ ] 下载、无需 Convert 安装并卸载原生 RootHide 测试包。

@@ -3,6 +3,7 @@
 #import "Bootstrap/WBProcessGuard.h"
 #import "Bootstrap/WBVersionGate.h"
 #import "Discovery/WBCapabilityRegistry.h"
+#import "Discovery/WBBubbleDiscoveryHook.h"
 #import "Discovery/WBDiagnostics.h"
 
 NSString * const WeChatBubbleBuildStage = @"bubble-discovery";
@@ -12,21 +13,23 @@ static void WBRunBootstrap(void) {
         return;
     }
     NSMutableDictionary<NSString *, id> *snapshot = [@{
-        @"diagnosticsFormat": @1,
-        @"pluginVersion": @"0.0.2",
+        @"diagnosticsFormat": @2,
+        @"pluginVersion": @"0.0.3",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],
         @"versionGate": [WBVersionGate snapshot]
     } mutableCopy];
     if ([WBVersionGate allowsDiscovery]) {
-        snapshot[@"discovery"] = [WBCapabilityRegistry discoverySnapshot];
+        NSMutableDictionary<NSString *, id> *discovery = [[WBCapabilityRegistry discoverySnapshot] mutableCopy];
+        discovery[@"hookInstalled"] = @([WBBubbleDiscoveryHook install]);
+        snapshot[@"discovery"] = discovery;
     } else {
         snapshot[@"discovery"] = @{
             @"mode": @"disabled",
             @"reason": @"unsupported-wechat-version",
             @"hookInstalled": @NO,
-            @"viewTreeScanned": @NO
+            @"recursiveViewTreeScanned": @NO
         };
     }
     NSError *error = nil;

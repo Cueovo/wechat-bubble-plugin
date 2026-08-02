@@ -11,16 +11,16 @@
 }
 
 + (BOOL)allowsDiscovery {
-    return [[self shortVersion] isEqualToString:@"8.0.60"];
+    return [[self shortVersion] isEqualToString:@"8.0.60"] && [[self buildVersion] isEqualToString:@"8.0.60.35"];
 }
 
 + (NSDictionary<NSString *, id> *)snapshot {
-    BOOL candidate = [self allowsDiscovery];
+    BOOL supported = [self allowsDiscovery];
     return @{
         @"shortVersion": [self shortVersion],
         @"buildVersion": [self buildVersion],
-        @"support": candidate ? @"candidate" : @"unknown",
-        @"discoveryAllowed": @(candidate),
+        @"support": supported ? @"supported" : @"unknown",
+        @"discoveryAllowed": @(supported),
         @"uiModificationAllowed": @NO
     };
 }

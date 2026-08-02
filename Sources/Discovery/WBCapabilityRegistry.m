@@ -57,7 +57,7 @@
         @"mode": @"read-only-runtime-capability-scan",
         @"candidateClasses": classes,
         @"hookInstalled": @NO,
-        @"viewTreeScanned": @NO
+        @"recursiveViewTreeScanned": @NO
     };
 }
 

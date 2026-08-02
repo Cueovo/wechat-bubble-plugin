@@ -12,14 +12,14 @@
 
 ## 候选而非契约
 
-`CommonMessageCellView` 是公开社区工程中出现过的候选宿主类，只能作为调查起点。必须在微信 8.0.60 真机上验证类、方法和局部视图结构，不能直接把社区类名当作稳定 API。
+`CommonMessageCellView` 已在微信 8.0.60.35 真机确认存在，但它是多个消息视图的公共父类，不作为首选 Hook 面。`TextMessageCellView` 已确认继承自 `CommonMessageCellView`，并实现 `layoutContentView`、`getBgImageView` 和 `getRichTextView`，因此当前调查只观察 `TextMessageCellView.layoutContentView`。
 
 ## 实施步骤
 
-1. CapabilityRegistry 检查候选类是否存在，不存在时只输出能力缺失结果。
-2. 枚举候选类的相关 Objective-C 方法签名，筛选配置完成或布局生命周期。
-3. 只对候选消息类做临时 Debug 观察，不全局 Hook UIKit。
-4. 在当前 Cell 局部视图树内记录匿名结构特征：类名、层级、尺寸、左右位置、可拉伸图片属性和 layer 特征。
+1. CapabilityRegistry 已确认 `BaseChatCellView`、`ChatTableViewCell`、`CommonMessageCellView` 和 `TextMessageCellView` 均存在。
+2. 已确认 `TextMessageCellView` 实现 `layoutContentView`，并提供 `getBgImageView`、`getRichTextView` 窄接口。
+3. 临时 Debug 观察只 Hook `TextMessageCellView.layoutContentView`，先调用原实现，再采集匿名结构。
+4. 只记录当前 Cell 的气泡背景、富文本视图和直接子视图特征：类名、尺寸、左右位置、可拉伸图片属性和 layer 特征。
 5. 不记录 UILabel 文本、会话名称、头像内容、图片路径、消息模型或对象完整描述。
 6. 比较发送/接收、单聊/群聊、单行/多行、复用滚动后的稳定特征。
 7. 选出最窄切入点和气泡定位规则，并定义最低置信度。
