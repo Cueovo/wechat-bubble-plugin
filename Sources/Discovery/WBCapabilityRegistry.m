@@ -1,32 +1,14 @@
 #import "WBCapabilityRegistry.h"
 #import <objc/runtime.h>
-#import <stdlib.h>
 
 @implementation WBCapabilityRegistry
 
-+ (BOOL)isRelevantSelectorName:(NSString *)name {
-    NSString *lowercaseName = name.lowercaseString;
-    for (NSString *term in @[@"layout", @"config", @"update", @"reload", @"cell", @"view", @"message"]) {
-        if ([lowercaseName containsString:term]) {
-            return YES;
-        }
++ (NSDictionary<NSString *, NSNumber *> *)selectorAvailabilityForClass:(Class)candidateClass names:(NSArray<NSString *> *)names {
+    NSMutableDictionary<NSString *, NSNumber *> *availability = [NSMutableDictionary dictionary];
+    for (NSString *name in names) {
+        availability[name] = @([candidateClass instancesRespondToSelector:NSSelectorFromString(name)]);
     }
-    return NO;
-}
-
-+ (NSArray<NSString *> *)relevantMethodsForClass:(Class)candidateClass {
-    unsigned int methodCount = 0;
-    Method *methods = class_copyMethodList(candidateClass, &methodCount);
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (unsigned int index = 0; index < methodCount && names.count < 80; index++) {
-        NSString *name = NSStringFromSelector(method_getName(methods[index]));
-        if ([self isRelevantSelectorName:name]) {
-            [names addObject:name];
-        }
-    }
-    free(methods);
-    [names sortUsingSelector:@selector(compare:)];
-    return names;
+    return availability;
 }
 
 + (NSDictionary<NSString *, id> *)snapshotForClassName:(NSString *)className {
@@ -35,11 +17,19 @@
         return @{@"available": @NO};
     }
     Class superclass = class_getSuperclass(candidateClass);
-    return @{
+    NSMutableDictionary<NSString *, id> *snapshot = [@{
         @"available": @YES,
-        @"superclass": superclass ? NSStringFromClass(superclass) : @"",
-        @"relevantInstanceMethods": [self relevantMethodsForClass:candidateClass]
-    };
+        @"superclass": superclass ? NSStringFromClass(superclass) : @""
+    } mutableCopy];
+    if ([className isEqualToString:@"TextMessageCellView"]) {
+        snapshot[@"requiredSelectors"] = [self selectorAvailabilityForClass:candidateClass names:@[
+            @"layoutContentView",
+            @"getBgImageView",
+            @"getRichTextView",
+            @"getHeadImageView"
+        ]];
+    }
+    return snapshot;
 }
 
 + (NSDictionary<NSString *, id> *)discoverySnapshot {
@@ -54,7 +44,7 @@
         classes[className] = [self snapshotForClassName:className];
     }
     return @{
-        @"mode": @"read-only-runtime-capability-scan",
+        @"mode": @"required-runtime-capability-check",
         @"candidateClasses": classes,
         @"hookInstalled": @NO,
         @"recursiveViewTreeScanned": @NO

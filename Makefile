@@ -12,10 +12,12 @@ WeChatBubble_FILES = \
 	Sources/Bootstrap/WBProcessGuard.m \
 	Sources/Bootstrap/WBVersionGate.m \
 	Sources/Discovery/WBCapabilityRegistry.m \
-	Sources/Discovery/WBBubbleDiscoveryHook.m \
-	Sources/Discovery/WBDiagnostics.m
+	Sources/Discovery/WBDiagnostics.m \
+	Sources/Styling/WBBubbleThemeProvider.m \
+	Sources/Styling/WBBubbleStyler.m \
+	Sources/Styling/WBTextBubbleStyleHook.m
 WeChatBubble_CFLAGS = -fobjc-arc
-WeChatBubble_FRAMEWORKS = Foundation UIKit
+WeChatBubble_FRAMEWORKS = Foundation UIKit QuartzCore
 WeChatBubble_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk

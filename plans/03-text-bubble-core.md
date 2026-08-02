@@ -30,6 +30,29 @@
 8. 不修改约束、frame、Cell 高度、点击区域、手势和无障碍语义。
 9. 增加内部总开关；关闭时遍历当前可见目标并恢复，后续复用也保持原样。
 
+## 0.1.0 实现状态
+
+- 构建阶段为 `text-bubble-core`，只对白名单微信 `8.0.60.35` 开启 UI 修改。
+- Release 源列表不再编译阶段 02 的布局采样 Hook。
+- 仅 Hook `TextMessageCellView.layoutContentView`，并始终先执行微信原实现。
+- 使用 `getBgImageView`、`getRichTextView` 和优先的 `getHeadImageView` 定位；头像 `(0, 0)`、中间区域或无效几何全部跳过。
+- 接收侧浅色为 `#E8F0FF`，发送侧浅色为 `#DCC8FF`；深色分别为 `#26344A` 和 `#4C3E70`。
+- 自有 `CAShapeLayer` 固定插入气泡 layer 的第 0 个子层，位于异步 `contents` 之上、文字子视图之下。
+- 样式参数为 96% 填充透明度、12pt 圆角和 1pt 描边。
+- 关联对象保证每个气泡最多一个样式层；方向、气泡或识别条件失效时移除自有层，不修改微信原始视觉属性。
+
+## 0.1.0 真机验证步骤
+
+1. 安装 GitHub Actions 生成的原生 RootHide `0.1.0` 包，完全结束并重新打开微信。
+2. 先确认聊天列表和微信冷启动正常，再进入专用测试会话。
+3. 确认接收文字为浅蓝气泡、发送文字为浅紫气泡，圆角和描边清晰可见。
+4. 覆盖发送/接收、单行、多行、超长、Emoji、链接和群聊文字，并快速上下滚动至少 20 次。
+5. 覆盖图片、语音、视频、文件、位置和转账，确认均保持微信原样。
+6. 切换系统浅色/深色模式并重新进入会话，确认颜色正确且文字仍可读。
+7. 长按、复制、点击链接、进入退出会话和前后台切换，确认交互与 Cell 高度不变。
+8. 检查 `Library/Caches/WeChatBubble/diagnostics.plist`：`pluginVersion=0.1.0`、`diagnosticsFormat=4`、`versionGate.uiModificationAllowed=true`、`styling.hookInstalled=true`、`discovery.explorationHookInstalled=false`。
+9. 若出现启动异常、文字被遮挡、颜色串位或非文字消息变化，立即卸载插件并保留上述诊断文件。
+
 ## 测试场景
 
 - 发送/接收单行文字。
