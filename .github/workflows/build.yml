@@ -1,4 +1,4 @@
-name: Build Rootless Package
+name: Build RootHide Package
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  THEOS_COMMIT: 16362d3aa83a0acd56df4493d575d34306d42478
+  THEOS_COMMIT: 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
 
 jobs:
   build:
@@ -46,13 +46,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --no-checkout https://github.com/theos/theos.git "$THEOS"
+          git clone --no-checkout https://github.com/roothide/theos.git "$THEOS"
           git -C "$THEOS" checkout "$THEOS_COMMIT"
           git -C "$THEOS" submodule update --init --recursive
           echo "theos_commit=$(git -C "$THEOS" rev-parse HEAD)" | tee -a build-manifest.txt
           brew list --versions ldid xz dpkg | tee -a build-manifest.txt
 
-      - name: Build rootless package
+      - name: Build RootHide package
         shell: bash
         run: |
           set -euo pipefail
@@ -68,14 +68,18 @@ jobs:
           dpkg-deb --info "$package" | tee package-info.txt
           dpkg-deb --contents "$package" | tee package-contents.txt
           grep -Fq 'Package: com.bi8bo.wechat.bubble' package-info.txt
-          grep -Fq 'Architecture: iphoneos-arm64' package-info.txt
-          grep -Fq 'var/jb/Library/MobileSubstrate/DynamicLibraries/WeChatBubble.dylib' package-contents.txt
+          grep -Fq 'Architecture: iphoneos-arm64e' package-info.txt
+          grep -Fq 'Library/MobileSubstrate/DynamicLibraries/WeChatBubble.dylib' package-contents.txt
+          if grep -Fq 'var/jb/Library/MobileSubstrate/DynamicLibraries/WeChatBubble.dylib' package-contents.txt; then
+            echo 'Unexpected ordinary rootless package path in RootHide artifact' >&2
+            exit 1
+          fi
           shasum -a 256 "$package" | tee SHA256SUMS
 
       - name: Upload package
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
-          name: wechat-bubble-rootless-${{ github.sha }}
+          name: wechat-bubble-roothide-${{ github.sha }}
           path: |
             packages/*.deb
             SHA256SUMS

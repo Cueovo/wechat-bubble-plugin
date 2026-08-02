@@ -7,7 +7,7 @@
 ## 前置条件
 
 - 阶段 01 已通过，最小 Tweak 可稳定注入。
-- 真机环境仍为 iPhone 14 Pro Max / iOS 16.5 / Dopamine / 微信 8.0.60。
+- 真机环境仍为 iPhone 14 Pro Max / iOS 16.5 / Dopamine 2.4.9 RootHide / ElleKit 1.2 / 微信 8.0.60。
 - 已准备包含单行、多行、Emoji、链接和群聊文字的测试会话。
 
 ## 候选而非契约

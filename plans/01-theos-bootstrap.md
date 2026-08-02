@@ -2,13 +2,13 @@
 
 ## 目标
 
-建立最小 rootless Tweak：能够被加载进微信 8.0.60 主进程，但不 Hook 消息视图、不改变任何 UI。
+建立最小原生 RootHide Tweak：能够被加载进微信 8.0.60 主进程，但不 Hook 消息视图、不改变任何 UI。
 
 ## 前置条件
 
 - 阶段 00 已通过。
 - 微信 Bundle ID 和主可执行文件名已真机确认。
-- rootless 包安装、卸载和结束微信进程的流程可用。
+- RootHide 包安装、卸载和结束微信进程的流程可用。
 
 ## 计划结构
 
@@ -30,7 +30,7 @@ Tests/
 
 ## 实施步骤
 
-1. 创建 Theos Tweak 项目和 rootless 包元数据。
+1. 创建 Theos Tweak 项目和原生 RootHide 包元数据。
 2. Filter 只匹配微信主 Bundle；入口再次校验主可执行文件，形成双重进程守卫。
 3. 开启 ARC，只链接 MVP 必需的 Foundation/UIKit。
 4. 入口只完成一次性、延迟的 Bootstrap，不在 dylib 构造阶段遍历视图树。
@@ -41,7 +41,7 @@ Tests/
 
 ## 验证清单
 
-- [ ] 包架构为 `iphoneos-arm64`，文件位于正确 rootless 路径。
+- [ ] 包架构为 `iphoneos-arm64e`，由 `roothide/theos` 使用 `roothide` scheme 生成。
 - [ ] dylib 仅加载到微信主进程，不加载到 SpringBoard、扩展或其他 App。
 - [ ] 微信 8.0.60 冷启动、热启动、后台恢复均正常。
 - [ ] 插件入口重复通知不会重复初始化。
@@ -57,7 +57,7 @@ Tests/
 
 ## 产物
 
-- 可安装的最小 rootless `.deb`。
+- 可安装且无需 RootHide Patcher 转换的原生 RootHide `.deb`。
 - Bootstrap、ProcessGuard、VersionGate 和 CapabilityRegistry 骨架。
 - 一份阶段 01 真机验证记录。
 

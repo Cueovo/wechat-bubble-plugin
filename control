@@ -1,8 +1,8 @@
 Package: com.bi8bo.wechat.bubble
 Name: WeChat Bubble
-Version: 0.0.1
-Architecture: iphoneos-arm64
-Description: Minimal rootless bootstrap package for the WeChat Bubble MVP.
+Version: 0.0.2
+Architecture: iphoneos-arm64e
+Description: Native RootHide bootstrap and read-only bubble capability discovery for WeChat 8.0.60.
 Maintainer: Cueovo
 Author: Cueovo
 Section: Tweaks

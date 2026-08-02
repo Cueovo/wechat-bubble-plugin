@@ -1,7 +1,7 @@
 # iOS 微信聊天气泡插件技术路线（MVP）
 
 - 决策日期：2026-08-03
-- 文档状态：技术选型定稿，尚未进入编码
+- 文档状态：技术选型已按真机环境修订，阶段 01/02 实施中
 - 项目阶段：MVP
 - 目标：仅修改本机 iOS 微信聊天界面的消息气泡外观
 - 计划分发：公开分发
@@ -15,7 +15,7 @@
 1. **语言与 UI：Objective-C（ARC）+ UIKit**。
 2. **构建与打包：Theos**，最低目标 iOS 15.0。
 3. **Hook：只 Hook 微信聊天消息相关的 Objective-C 私有类；业务核心不依赖特定注入器。**
-4. **主交付形态：rootless `.deb`**，面向 Dopamine/ElleKit 等现代无根越狱环境。
+4. **主交付形态：原生 RootHide `.deb`**，面向已确认的 Dopamine 2.4.9 RootHide / ElleKit 1.2 环境。
 5. **次交付形态：可由 TrollFools 导入的 `.deb`/`.zip` 或独立 `.dylib`**，面向 TrollStore 支持的设备。
 6. **普通未越狱重签名 IPA：仅作为实验性备选，不作为“最稳”公开发行路线。**
 7. **兼容策略：微信版本白名单 + 运行时能力探测 + 未知版本默认关闭 + 本地安全模式。**
@@ -24,9 +24,9 @@
 ### 1.2 为什么这是 2026 年 8 月最稳的组合
 
 - 当前 App Store 微信要求 iOS 15.0 或更高版本，因此 MVP 没有必要背负 iOS 14 及更早系统的兼容成本。
-- Theos 是 iOS 越狱 Tweak 的成熟构建和 `.deb` 打包方案，原生支持 rootless 路径、`@rpath` 和 `iphoneos-arm64` 包架构。
+- `roothide/theos` 是当前锁定真机环境的构建方案，可直接生成 `iphoneos-arm64e` RootHide 包，避免依赖设备端 Patcher Convert。
 - 微信界面主体仍可通过 Objective-C Runtime/UIKit 观察和定点修改。Objective-C 对私有类、动态 Selector 和旧式 UIKit 视图树的适配成本低于纯 Swift。
-- rootless 越狱让微信保持 App Store 官方安装形态，不需要修改微信 Bundle ID、签名和 entitlements；相较重签名 IPA，推送、Keychain、URL Scheme、应用更新及数据容器更少受到影响。
+- Dopamine RootHide 让微信保持 App Store 官方安装形态，不需要修改微信 Bundle ID、签名和 entitlements；相较重签名 IPA，推送、Keychain、URL Scheme、应用更新及数据容器更少受到影响。
 - TrollStore/TrollFools 可以复用同一业务核心，但只覆盖有限系统，不应被描述为面向所有 iPhone 的通用方案。
 
 ## 2. 一个核心不等于三条路线同样稳定
@@ -35,7 +35,7 @@
 
 | 路线 | 微信安装形态 | 覆盖范围 | 开发调试 | 用户安装 | 更新影响 | 稳定性判断 |
 |---|---|---:|---:|---:|---:|---|
-| rootless 越狱 Tweak | 官方微信 + 独立 Tweak | 有兼容越狱的设备 | 最成熟 | 需要越狱 | 更新 Tweak 即可 | **主路线，最稳** |
+| Dopamine RootHide Tweak | 官方微信 + 独立 Tweak | 当前锁定测试机 | 成熟 | 需要越狱 | 更新 Tweak 即可 | **主路线** |
 | TrollStore + TrollFools | 官方微信被原位注入 | TrollStore 支持的特定系统 | 较方便 | 无完整越狱，但门槛仍高 | 微信更新后通常要重新注入 | **次路线** |
 | 普通侧载/重签名 IPA | 修改后的微信 IPA | 理论上较广，实际受签名限制 | 复杂 | 证书、续签和安装复杂 | 每次更新都要重新改包和签名 | **实验路线，不稳定** |
 | App Store 正式应用 | 独立应用 | 普通 iPhone | 不可实现跨 App 修改 | 简单 | 不适用 | **不可行** |
@@ -73,17 +73,17 @@ TrollStore 官方目前列出的支持版本为 iOS 14.0 beta 2–16.6.1、16.7 
 |---|---|---|
 | 语言 | Objective-C + ARC | 与 UIKit、Objective-C Runtime 和微信私有类交互直接；避免 MVP 引入 Swift/Orion 运行时与桥接复杂度 |
 | UI | UIKit | 微信当前聊天界面兼容路线的基础；无需引入 SwiftUI |
-| 构建 | Theos | 成熟的 Tweak 构建、Filter 和 `.deb` 打包能力；支持 rootless |
-| Hook 表达 | 定点 Objective-C Runtime Hook；可在 rootless 入口薄层使用 Logos | 独立注入包不强依赖某个 Hook Runtime，核心可复用；避免全局 UIKit Hook |
+| 构建 | `roothide/theos` | 直接生成当前真机所需的原生 RootHide 包 |
+| Hook 表达 | 定点 Objective-C Runtime Hook；可在 RootHide 入口薄层使用 Logos | 核心不依赖大范围 UIKit Hook，失败时可以能力门控关闭 |
 | 偏好存储 | `NSUserDefaults`，插件独立命名空间 | 设置简单、本地、无数据库依赖；必须做 schema 版本迁移 |
 | 资源 | 独立 `.bundle` | 主题资源与逻辑分离；同时适配 `.deb` 和 TrollFools 导入 |
-| 主包 | rootless `.deb` | 现代越狱主流形态；Theos 原生处理 `/var/jb` 与 `@rpath` |
+| 主包 | 原生 RootHide `.deb` | `roothide` scheme、源码 `arm64`、Debian 架构 `iphoneos-arm64e`，无需设备端 Convert |
 | 次包 | 注入用 `.dylib` + `.bundle`，或 TrollFools 可导入包 | 复用核心，覆盖 TrollStore 设备 |
 | CI | 固定 Theos commit、固定 SDK/Xcode 的 macOS 构建机 | 构建可复现；Windows 本地环境不作为发布产物的唯一来源 |
 
 ### 4.1 为什么 MVP 不首选 Swift/Orion
 
-Swift/Orion 可以开发 Tweak，但本项目主要面对动态 Objective-C 私有类，并且需要同时考虑 rootless 与独立 dylib 注入。Objective-C 的依赖更少、二进制更直接、动态 Runtime 操作更成熟。设置页也没有复杂到需要 SwiftUI。
+Swift/Orion 可以开发 Tweak，但本项目主要面对动态 Objective-C 私有类，并且需要同时考虑 RootHide 与独立 dylib 注入。Objective-C 的依赖更少、二进制更直接、动态 Runtime 操作更成熟。设置页也没有复杂到需要 SwiftUI。
 
 这不是否定 Swift，而是 MVP 阶段以兼容和可诊断性优先。后续独立管理 App 可以使用 SwiftUI，但不应让微信进程内的核心依赖它。
 
@@ -262,18 +262,18 @@ iPhone 型号 / SoC + iOS 精确版本 + 越狱/注入环境版本 + 微信精�
 
 ## 9. 打包与分发
 
-### 9.1 rootless 主包
+### 9.1 RootHide 主包
 
-- Bundle Filter 仅匹配微信主 Bundle（通常为 `com.tencent.xin`），并增加主可执行文件守卫。
-- 使用 Theos rootless scheme，由 Theos 处理 `/var/jb`、`@rpath` 和 `iphoneos-arm64`。
-- `.deb` 明确声明最低固件、所需 Tweak Loader 兼容依赖和冲突项。
+- Bundle Filter 仅匹配微信主 Bundle（`com.tencent.xin`），并增加主可执行文件守卫。
+- 使用固定 revision 的 `roothide/theos` 和 `THEOS_PACKAGE_SCHEME=roothide`，源码目标 `arm64`，Debian 架构 `iphoneos-arm64e`。
+- `.deb` 明确声明最低固件和 Tweak Loader 兼容依赖，必须可由 RootHide Sileo 直接安装，不能依赖 Patcher Convert。
 - 安装/升级后只结束微信进程，不重启 SpringBoard，除非实际验证要求如此。
-- 配置和资源使用 rootless-aware 路径；优先使用应用可访问的偏好机制，避免硬编码 `/Library`。
+- 应用数据使用系统容器 API；若后续访问 jailbreak 文件，必须使用 RootHide 提供的路径 API，禁止硬编码 `/var/jb` 或 `/Library`。
 
 ### 9.2 TrollStore/TrollFools 次包
 
 - 复用 BubbleFeature、Preferences 和 Runtime Capability 代码。
-- 输出不依赖 rootless 绝对路径的 dylib 和资源 bundle。
+- 输出不依赖 RootHide 绝对路径的 dylib 和资源 bundle。
 - 注入包不得假设设备已安装 ElleKit/Substrate；如果使用 Hook backend，必须明确声明并验证依赖，或使用独立 Objective-C Runtime 入口。
 - 微信每次升级后，将“重新注入并重新跑兼容检测”视为标准流程。
 - 只支持 TrollStore 官方列明的系统，不宣传支持 17.0.1+ 的普通设备。
@@ -304,8 +304,8 @@ Apple 的沙箱和强制代码签名不允许普通第三方应用修改另一�
 |---|---|---|---|
 | iOS | 15.x 可用越狱版本 | 16.x 可用越狱版本 | TrollStore 支持的 17.0 |
 | SoC | arm64 老设备 | arm64e 设备 | 不同屏幕宽度设备 |
-| 环境 | rootless + ElleKit | rootless + 当前主流 loader | TrollStore + TrollFools |
-| 微信 | 一个明确锁定的 8.0.x 基线 | 当前候选 8.0.75，经验证后加入 | 前一支持版本 |
+| 环境 | Dopamine RootHide + ElleKit | 同一精确 RootHide 基线 | TrollStore + TrollFools |
+| 微信 | 8.0.60 精确 build | 后续候选版本，经验证后加入 | 前一支持版本 |
 | 外观 | 浅色 | 深色 | 大字体/关怀模式 |
 | 会话 | 单聊 | 群聊 | 公众号/服务通知只做不崩溃验证 |
 
@@ -350,7 +350,7 @@ Apple 的沙箱和强制代码签名不允许普通第三方应用修改另一�
 - Bootstrap、ProcessGuard、VersionGate、CapabilityRegistry。
 - 单一已验证微信版本。
 - 仅文字消息、两种纯色、总开关和恢复默认。
-- rootless `.deb` 单路线先达到稳定。
+- 原生 RootHide `.deb` 单路线先达到稳定。
 
 ### 阶段 2：稳定性
 
@@ -362,7 +362,7 @@ Apple 的沙箱和强制代码签名不允许普通第三方应用修改另一�
 
 - 抽离注入入口，输出 TrollFools 可用包。
 - 跑独立 TrollStore 测试矩阵。
-- 不因第二路线破坏 rootless 主路线。
+- 不因第二路线破坏 RootHide 主路线。
 
 ### 阶段 4：公开发布准备
 
@@ -377,7 +377,7 @@ Apple 的沙箱和强制代码签名不允许普通第三方应用修改另一�
 - Objective-C（ARC）+ UIKit。
 - Theos 作为统一构建/打包系统。
 - 注入方式无关的气泡核心和窄范围 Runtime Hook。
-- rootless `.deb` 作为主发行物。
+- 原生 RootHide `.deb` 作为主发行物。
 - TrollStore/TrollFools 作为有限设备的次发行物。
 - 微信版本白名单、能力探测、未知版本关闭、安全模式。
 - 首版只做纯视觉和本地设置。
@@ -394,24 +394,25 @@ Apple 的沙箱和强制代码签名不允许普通第三方应用修改另一�
 
 ### 一句话架构
 
-> 用 Theos 构建一个 Objective-C/UIKit 的窄范围 UI Tweak，以 rootless `.deb` 为稳定主包，用同一业务核心派生 TrollFools 注入包；对未知微信版本默认不工作，而不是冒险 Hook。
+> 用 `roothide/theos` 构建一个 Objective-C/UIKit 的窄范围 UI Tweak，以原生 RootHide `.deb` 为稳定主包，用同一业务核心派生 TrollFools 注入包；对未知微信版本默认不工作，而不是冒险 Hook。
 
 ## 15. 调研来源
 
 访问日期均为 2026-08-03：
 
 1. Theos 文档首页：<https://theos.dev/docs/>
-2. Theos Rootless：<https://theos.dev/docs/rootless.html>
-3. Theos Packaging：<https://theos.dev/docs/packaging.html>
-4. Theos Swift：<https://theos.dev/docs/Swift.html>
-5. TrollStore README：<https://github.com/opa334/TrollStore/blob/main/README.md>
-6. TrollFools README：<https://github.com/Lessica/TrollFools/blob/main/README.md>
-7. ElleKit：<https://github.com/tealbathingsuit/ellekit>
-8. 微信 App Store 页面：<https://apps.apple.com/cn/app/%E5%BE%AE%E4%BF%A1/id414478124>
-9. 腾讯微信软件许可及服务协议：<https://weixin.qq.com/agreement?lang=zh_CN>
-10. Apple App Code Signing：<https://support.apple.com/guide/security/app-code-signing-process-sec7c917bf14/web>
-11. Apple Runtime Process Security：<https://support.apple.com/guide/security/security-of-runtime-process-sec15bfe098e/web>
-12. Apple App Review Guidelines：<https://developer.apple.com/app-store/review/guidelines/>
-13. WeChatGlass（用于观察公开的现代微信 UI Tweak 工程实践，不作为兼容性保证）：<https://github.com/RayrenSX/WeChatGlass>
+2. RootHide Developer：<https://github.com/roothide/Developer>
+3. `roothide/theos`：<https://github.com/roothide/theos>
+4. Theos Packaging：<https://theos.dev/docs/packaging.html>
+5. Theos Swift：<https://theos.dev/docs/Swift.html>
+6. TrollStore README：<https://github.com/opa334/TrollStore/blob/main/README.md>
+7. TrollFools README：<https://github.com/Lessica/TrollFools/blob/main/README.md>
+8. ElleKit：<https://github.com/tealbathingsuit/ellekit>
+9. 微信 App Store 页面：<https://apps.apple.com/cn/app/%E5%BE%AE%E4%BF%A1/id414478124>
+10. 腾讯微信软件许可及服务协议：<https://weixin.qq.com/agreement?lang=zh_CN>
+11. Apple App Code Signing：<https://support.apple.com/guide/security/app-code-signing-process-sec7c917bf14/web>
+12. Apple Runtime Process Security：<https://support.apple.com/guide/security/security-of-runtime-process-sec15bfe098e/web>
+13. Apple App Review Guidelines：<https://developer.apple.com/app-store/review/guidelines/>
+14. WeChatGlass（用于观察公开的现代微信 UI Tweak 工程实践，不作为兼容性保证）：<https://github.com/RayrenSX/WeChatGlass>
 
 > 注：微信私有类和社区项目不是稳定官方 API；引用它们只用于评估可行性和工程实践。真正的支持范围必须以本项目真机测试矩阵为准。

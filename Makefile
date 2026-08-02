@@ -1,12 +1,18 @@
 ARCHS = arm64
 TARGET = iphone:clang:latest:15.0
-THEOS_PACKAGE_SCHEME = rootless
+DEB_ARCH = iphoneos-arm64e
+THEOS_PACKAGE_SCHEME = roothide
 
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = WeChatBubble
 
-WeChatBubble_FILES = Sources/TweakEntry.m
+WeChatBubble_FILES = \
+	Sources/TweakEntry.m \
+	Sources/Bootstrap/WBProcessGuard.m \
+	Sources/Bootstrap/WBVersionGate.m \
+	Sources/Discovery/WBCapabilityRegistry.m \
+	Sources/Discovery/WBDiagnostics.m
 WeChatBubble_CFLAGS = -fobjc-arc
 WeChatBubble_FRAMEWORKS = Foundation
 

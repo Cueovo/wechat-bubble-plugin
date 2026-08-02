@@ -10,14 +10,14 @@
 |---|---|
 | 设备 | iPhone 14 Pro Max（iPhone15,3，A16，arm64e 设备） |
 | iOS | 16.5 |
-| 越狱 | Dopamine 2.4.9 rootless |
+| 越狱 | Dopamine 2.4.9 RootHide |
 | Tweak Loader | ElleKit 1.2 |
 | 微信 | 8.0.60 |
 | 微信 Bundle ID | `com.tencent.xin`，须在阶段 00 真机确认 |
 | 最低部署目标 | iOS 15.0 |
 | 源码目标架构 | `arm64`，微信是 App Store App，不因设备为 arm64e 而强制增加 arm64e slice |
-| Debian 包架构 | `iphoneos-arm64` |
-| 包方案 | Theos rootless |
+| Debian 包架构 | `iphoneos-arm64e` |
+| 包方案 | Theos `roothide` |
 | 构建 | GitHub Actions `macos-15` runner |
 | GitHub | `https://github.com/Cueovo/wechat-bubble-plugin`（公开） |
 | Package ID | `com.bi8bo.wechat.bubble` |
@@ -33,21 +33,23 @@
 - 不 Hook 网络、登录、支付、发送和接收逻辑。
 - 不全局 Hook `UIView`、`UIImageView` 或所有 `layoutSubviews`。
 - 不在热路径执行文件 I/O、网络访问、JSON 解析或逐消息日志。
-- rootless `.deb` 是 MVP 唯一必须完成的交付物；TrollStore 不在本轮实施范围内。
+- 原生 RootHide `.deb` 是 MVP 唯一必须完成的交付物；普通 rootless 转换包和 TrollStore 不在本轮发布范围内。
 
 ## 阶段顺序
 
 | 阶段 | 文档 | 结果 | 状态 |
 |---:|---|---|---|
 | 00 | [环境与基线](./00-environment-baseline.md) | 可复现的工具链和真机记录 | 进行中 |
-| 01 | [Theos 骨架与注入](./01-theos-bootstrap.md) | 无功能、可安全加载的 rootless Tweak | 未开始 |
-| 02 | [气泡视图定位](./02-bubble-discovery.md) | 微信 8.0.60 的最小适配事实 | 未开始 |
+| 01 | [Theos 骨架与注入](./01-theos-bootstrap.md) | 无功能、可安全加载的原生 RootHide Tweak | 进行中 |
+| 02 | [气泡视图定位](./02-bubble-discovery.md) | 微信 8.0.60 的最小适配事实 | 进行中 |
 | 03 | [文字气泡核心](./03-text-bubble-core.md) | 固定主题可正确应用和恢复 | 未开始 |
 | 04 | [设置与持久化](./04-preferences.md) | 微信内设置、深浅色主题和恢复默认 | 未开始 |
 | 05 | [安全与兼容](./05-safety-compatibility.md) | 安全模式、版本门控、诊断和性能达标 | 未开始 |
-| 06 | [发布候选](./06-release-candidate.md) | 可安装、升级、卸载的 MVP rootless `.deb` | 未开始 |
+| 06 | [发布候选](./06-release-candidate.md) | 可安装、升级、卸载的 MVP RootHide `.deb` | 未开始 |
 
 依赖链：`00 → 01 → 02 → 03 → 04 → 05 → 06`，不并行修改同一个 Hook 路径。
+
+阶段 01/02 当前真机步骤：[RootHide 安装与气泡发现诊断](./02-device-discovery-test.md)。
 
 ## 执行规则
 
@@ -61,7 +63,7 @@
 
 ## MVP 完成定义
 
-- iPhone 14 Pro Max / iOS 16.5 / Dopamine / 微信 8.0.60 上无启动崩溃和黑屏。
+- iPhone 14 Pro Max / iOS 16.5 / Dopamine 2.4.9 RootHide / ElleKit 1.2 / 微信 8.0.60 上无启动崩溃和黑屏。
 - 发送与接收文字气泡可分别配置浅色、深色样式。
 - 单行、多行、长文本、Emoji、链接、群聊文字和 Cell 快速复用无样式串位。
 - 图片、语音、视频、文件、位置、转账等非目标消息保持微信原样。

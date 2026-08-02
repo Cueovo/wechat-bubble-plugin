@@ -2,7 +2,7 @@
 
 - 检查日期：2026-08-03
 - 对应阶段：[阶段 00：环境与基线](./00-environment-baseline.md)
-- 当前状态：阶段 00 的 GitHub Actions 构建已通过；等待下载 artifact 并在真机安装、卸载
+- 当前状态：已确认实际环境为 Dopamine RootHide；普通 rootless 0.0.1 经 Convert 后安装且微信无闪退，原生 RootHide 0.0.2 待 CI 和真机验证
 
 ## 真机基线
 
@@ -11,12 +11,12 @@
 | 设备 | iPhone 14 Pro Max（iPhone15,3，A16） | 已确认 |
 | 设备 ABI | arm64e | 已确认 |
 | iOS | 16.5 | 已确认 |
-| 越狱 | Dopamine 2.4.9 rootless | 已确认 |
+| 越狱 | Dopamine 2.4.9 RootHide | 已确认 |
 | Tweak Loader | ElleKit 1.2 | 已确认 |
 | 微信 | 8.0.60 | 已确认，`CFBundleVersion` 待真机读取 |
 | Bundle ID | `com.tencent.xin` | 用户已提供 |
 | 主可执行文件 | 未确认 | 待真机确认 |
-| Artifact 安装 | Sileo/Filza 手工安装 | 路线已确认，待首次真机验证 |
+| Artifact 安装 | Sileo/Filza 手工安装 | 0.0.1 经 RootHide Patcher Convert 后安装成功；原生包待验证 |
 
 ## GitHub/CI 基线
 
@@ -24,12 +24,12 @@
 |---|---|---|
 | Remote | `https://github.com/Cueovo/wechat-bubble-plugin` | `main` 已推送 |
 | 可见性 | 公开 | 已确认 |
-| Package ID | `com.bi8bo.wechat.bubble` | CI 包元数据验证通过 |
-| Runner | `macos-15` | Run 3 验证通过 |
-| Theos | `16362d3aa83a0acd56df4493d575d34306d42478` | Run 3 验证通过 |
-| Artifact | `wechat-bubble-rootless-8c28d1bca071a8d500eb2b7664394f4ceb623b18` | 已生成，3,514 bytes |
-| Artifact digest | `sha256:aabd5fb3b1a140d1054141742b37f180ae5691bf41068fd7a32a9dd73bcb871a` | GitHub artifact digest |
-| Artifact 到期 | 2026-08-16 17:45:22 UTC | 14 天保留策略 |
+| Package ID | `com.bi8bo.wechat.bubble` | 已确认 |
+| Runner | `macos-15` | 普通 rootless Run 4 已通过；RootHide 待验证 |
+| RootHide Theos | `88506b2c22e9e07dd4ed055f23c9e398a117a2c7` | 已固定，待 CI 验证 |
+| 已验证旧 Artifact | `wechat-bubble-rootless-7dfe77e3a2b261fc3507e3cb200591309b7f0114` | 0.0.1，需 Convert，不作为后续发布包 |
+| 目标 Artifact | `wechat-bubble-roothide-<commit>` | 0.0.2，必须无需 Convert |
+| 旧 Artifact digest | `sha256:66483f14d19d8da5fa19dfb8612579672e8ff8b86cdf7720e6a5048bc70c3ef3` | 仅保留历史记录 |
 
 ## Windows 主机检查
 
@@ -51,10 +51,10 @@
 当前 Windows 主机不承担 Theos 编译。阶段 00 已选择 GitHub Actions macOS runner：
 
 1. Windows 主机仅用于编辑、Git 操作和静态检查。
-2. GitHub Actions 负责安装固定 revision 的 Theos、编译和生成 rootless `.deb` artifact。
-3. 工作流记录 runner、Xcode、SDK、Clang、ldid、dpkg 和 Theos revision。
+2. GitHub Actions 负责安装固定 revision 的 `roothide/theos`、编译和生成原生 RootHide `.deb` artifact。
+3. 工作流记录 runner、Xcode、SDK、Clang、ldid、dpkg 和 `roothide/theos` revision。
 4. CI 不保存测试机 IP、SSH 密码或私钥；artifact 由用户人工安装到设备。
-5. 本地 Git 与 GitHub remote 已建立，`main` 已推送且 rootless CI 构建验证通过。
+5. 普通 rootless 构建链已验证，但实际目标已切换到无需设备端 Convert 的原生 RootHide 构建。
 
 ## 阶段 00 待完成
 
@@ -63,11 +63,13 @@
 - [x] 创建 CI 并锁定 Theos commit。
 - [x] 提交并 push 后完成首次 GitHub Actions 运行。
 - [ ] 从 artifact 的 `build-manifest.txt` 抄录 runner 的 iOS SDK、Xcode、Clang、ldid 和 dpkg 精确版本。
-- [x] 记录 Dopamine 2.4.9。
+- [x] 记录 Dopamine 2.4.9 RootHide。
 - [x] 记录 ElleKit 1.2。
 - [x] 确认 artifact 采用 Sileo/Filza 手工安装。
-- [ ] 完成首次 artifact 真机安装和卸载。
+- [x] 完成普通 rootless 0.0.1 经 Convert 后的首次安装和微信启动验证。
+- [ ] 完成原生 RootHide 0.0.2 无需 Convert 的安装和卸载验证。
 - [x] 确认微信 Bundle ID 为 `com.tencent.xin`。
 - [ ] 确认微信 `CFBundleVersion` 和主可执行文件。
-- [x] 由 CI 构建并上传无 Hook 的最小测试包 artifact。
-- [ ] 下载、安装并卸载最小测试包。
+- [x] 由 CI 构建并上传普通 rootless 0.0.1 基线 artifact。
+- [ ] 由 CI 构建并上传原生 RootHide 0.0.2 诊断 artifact。
+- [ ] 下载、无需 Convert 安装并卸载原生 RootHide 测试包。

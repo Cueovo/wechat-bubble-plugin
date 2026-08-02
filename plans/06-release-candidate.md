@@ -2,7 +2,7 @@
 
 ## 目标
 
-生成可复现、可安装、可升级、可降级、可卸载的 rootless MVP `.deb`，只声明支持已完成全量回归的精确环境。
+生成可复现、可安装、可升级、可降级、可卸载的原生 RootHide MVP `.deb`，只声明支持已完成全量回归的精确环境。
 
 ## 前置条件
 
@@ -18,7 +18,7 @@
 - iOS 16.5。
 - 已记录精确版本的 Dopamine + ElleKit。
 - 微信 8.0.60 的已验证精确 build。
-- rootless `.deb`。
+- 原生 RootHide `.deb`。
 
 其他设备可作为后续验证对象，不因为 CPU 或系统看似接近就自动列为支持。
 
@@ -27,7 +27,7 @@
 1. 固定 package identifier、版本号和依赖声明。
 2. 确认 Bundle Filter 只匹配微信主进程。
 3. 由固定工具链从干净环境执行 Release 构建。
-4. 检查包架构、rootless 路径、动态依赖、资源和调试符号策略。
+4. 检查 `iphoneos-arm64e` 包架构、RootHide scheme、动态依赖、资源和调试符号策略。
 5. 生成 SHA-256，并绑定源码 tag/revision 和构建环境记录。
 6. 执行全新安装、覆盖升级、降级、卸载和重新安装。
 7. 执行最终功能、故障、安全模式、诊断和性能回归。
@@ -48,7 +48,7 @@
 
 ## Release Gate
 
-- [ ] rootless 包架构和路径正确。
+- [ ] RootHide 包架构和 scheme 正确，无需设备端 Convert。
 - [ ] 所有必需依赖均明确且可满足。
 - [ ] 支持矩阵中的唯一首发组合完成全量真机回归。
 - [ ] 未知微信版本不启用气泡 Hook。
@@ -61,7 +61,7 @@
 
 ## 产物
 
-- MVP rootless Release `.deb`。
+- MVP 原生 RootHide Release `.deb`。
 - SHA-256 校验值。
 - 精确支持矩阵和已知限制。
 - 安装、升级、降级、卸载与安全模式恢复说明。
