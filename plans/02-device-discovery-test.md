@@ -3,7 +3,7 @@
 ## 构建目标
 
 - Package ID：`com.bi8bo.wechat.bubble`
-- 版本：`0.0.3`
+- 版本：`0.0.4`
 - 环境：Dopamine 2.4.9 RootHide / ElleKit 1.2
 - Package scheme：`roothide`
 - Debian architecture：`iphoneos-arm64e`
@@ -37,8 +37,8 @@ Library/Caches/WeChatBubble/diagnostics.plist
 
 预期字段：
 
-- `diagnosticsFormat`：应为 `2`。
-- `pluginVersion`：应为 `0.0.3`。
+- `diagnosticsFormat`：应为 `3`。
+- `pluginVersion`：应为 `0.0.4`。
 - `buildStage`：应为 `bubble-discovery`。
 - `process.isWeChatMainProcess`：应为 `true`。
 - `process.bundleIdentifier`：应为 `com.tencent.xin`。
@@ -51,7 +51,10 @@ Library/Caches/WeChatBubble/diagnostics.plist
 - `discovery.hookInstalled`：应为 `true`。
 - `discovery.recursiveViewTreeScanned`：必须为 `false`。
 - `discovery.observation.mode`：应为 `TextMessageCellView.layoutContentView-post-original`。
-- `discovery.observation.samples`：最多 16 个匿名、去重后的文字 Cell 局部几何样本。
+- `discovery.observation.directionRule`：应为 `MMHeadImageView-horizontal-midpoint`。
+- `discovery.observation.samples`：最多 24 个匿名、去重后的文字 Cell 局部几何样本；测试同时包含收发消息时应出现 `left` 和 `right`。
+- 每个样本的 `directionSourceClass` 应为 `MMHeadImageView`，`avatarFrameInCell` 应位于 Cell 对应侧。
+- `backgroundImage` 只记录普通/动画图片或 layer contents 是否存在，不记录图片数据或路径。
 - `discovery.observation.messageDataRead`、`textRead` 和 `recursiveViewTreeScanned`：必须全部为 `false`；`directSubviewsScanned` 应为 `true`。
 
 诊断不包含消息正文、会话名称、联系人、账号、头像、媒体路径、消息模型或完整视图树。反馈结果时只需提供 `versionGate`、`discovery.hookInstalled` 和 `discovery.observation`。
@@ -62,13 +65,15 @@ Library/Caches/WeChatBubble/diagnostics.plist
 |---|---|---|
 | Sileo 无 Convert 提示 | 待验证 | |
 | 原生 RootHide 包安装 | 待验证 | |
-| 微信冷启动 | 0.0.2 已通过；0.0.3 待验证 | |
+| 微信冷启动 | 0.0.2/0.0.3 已通过；0.0.4 待验证 | |
 | 前后台切换 | 待验证 | |
-| `diagnostics.plist` 生成 | 0.0.2 已通过；0.0.3 待验证 | |
+| `diagnostics.plist` 生成 | 0.0.2/0.0.3 已通过；0.0.4 待验证 | |
 | 主可执行文件 | 已确认 | `WeChat` |
 | `CFBundleVersion` | 已确认 | `8.0.60.35` |
 | 候选类快照 | 已确认 | 四个候选类均存在 |
-| 匿名布局观察样本 | 待诊断 | |
+| 匿名布局观察样本 | 已确认 | 0.0.3：44 次布局、16 个去重样本 |
+| 左右方向判定 | 待诊断 | 0.0.4 使用头像水平位置 |
+| 背景呈现来源 | 待诊断 | 普通/动画图片、layer contents 布尔状态 |
 | 卸载后微信正常 | 待验证 | |
 
 ## 回退

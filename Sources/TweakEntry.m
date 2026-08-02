@@ -13,8 +13,8 @@ static void WBRunBootstrap(void) {
         return;
     }
     NSMutableDictionary<NSString *, id> *snapshot = [@{
-        @"diagnosticsFormat": @2,
-        @"pluginVersion": @"0.0.3",
+        @"diagnosticsFormat": @3,
+        @"pluginVersion": @"0.0.4",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],

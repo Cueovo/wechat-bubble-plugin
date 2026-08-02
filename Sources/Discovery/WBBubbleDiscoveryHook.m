@@ -41,13 +41,33 @@ static NSArray<NSDictionary<NSString *, id> *> *WBDirectSubviewSnapshot(UIView *
     return subviews;
 }
 
+static UIView *WBAvatarView(UIView *view) {
+    for (UIView *subview in view.subviews) {
+        if ([WBClassName(subview) isEqualToString:@"MMHeadImageView"]) {
+            return subview;
+        }
+    }
+    return nil;
+}
+
 static NSDictionary<NSString *, id> *WBImageMetadata(id candidate) {
     if (![candidate isKindOfClass:UIImageView.class]) {
         return @{};
     }
     UIImageView *imageView = candidate;
     UIImage *image = imageView.image;
+    SEL animatedImageSelector = NSSelectorFromString(@"animatedImage");
+    id animatedImage = [candidate respondsToSelector:animatedImageSelector] ? ((id (*)(id, SEL))objc_msgSend)(candidate, animatedImageSelector) : nil;
     return @{
+        @"imagePresent": @(image != nil),
+        @"highlightedImagePresent": @(imageView.highlightedImage != nil),
+        @"animationImageCount": @(imageView.animationImages.count),
+        @"highlightedAnimationImageCount": @(imageView.highlightedAnimationImages.count),
+        @"animatedImageGetterAvailable": @([candidate respondsToSelector:animatedImageSelector]),
+        @"animatedImagePresent": @(animatedImage != nil),
+        @"layerContentsPresent": @(imageView.layer.contents != nil),
+        @"backgroundColorPresent": @(imageView.backgroundColor != nil),
+        @"opaque": @(imageView.opaque),
         @"imageSize": image ? @{@"width": @(image.size.width), @"height": @(image.size.height)} : @{},
         @"capInsets": image ? @{
             @"top": @(image.capInsets.top),
@@ -63,18 +83,11 @@ static NSDictionary<NSString *, id> *WBImageMetadata(id candidate) {
     };
 }
 
-static NSString *WBDirectionForBubbleRect(CGRect bubbleRect, CGFloat cellWidth) {
-    if (cellWidth <= 0) {
+static NSString *WBDirectionForAvatarRect(CGRect avatarRect, CGFloat cellWidth) {
+    if (cellWidth <= 0 || CGRectIsEmpty(avatarRect)) {
         return @"unknown";
     }
-    CGFloat midpoint = CGRectGetMidX(bubbleRect) / cellWidth;
-    if (midpoint < 0.45) {
-        return @"left";
-    }
-    if (midpoint > 0.55) {
-        return @"right";
-    }
-    return @"center";
+    return CGRectGetMidX(avatarRect) < cellWidth * 0.5 ? @"left" : @"right";
 }
 
 static void WBWriteSamplesLater(void) {
@@ -88,6 +101,7 @@ static void WBWriteSamplesLater(void) {
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
             NSDictionary<NSString *, id> *observation = @{
                 @"mode": @"TextMessageCellView.layoutContentView-post-original",
+                @"directionRule": @"MMHeadImageView-horizontal-midpoint",
                 @"layoutCallCount": @(layoutCallCount),
                 @"uniqueSampleCount": @(samples.count),
                 @"samples": samples,
@@ -116,16 +130,20 @@ static void WBCollectLayoutSample(id object) {
         return;
     }
     UIView *bubbleView = backgroundView;
+    UIView *avatarView = WBAvatarView(cellView);
     CGRect bubbleRect = [bubbleView convertRect:bubbleView.bounds toView:cellView];
+    CGRect avatarRect = avatarView ? [avatarView convertRect:avatarView.bounds toView:cellView] : CGRectZero;
     CGRect richTextRect = [richTextView isKindOfClass:UIView.class] ? [(UIView *)richTextView convertRect:((UIView *)richTextView).bounds toView:cellView] : CGRectZero;
-    NSString *direction = WBDirectionForBubbleRect(bubbleRect, CGRectGetWidth(cellView.bounds));
+    NSString *direction = WBDirectionForAvatarRect(avatarRect, CGRectGetWidth(cellView.bounds));
     NSString *signature = [NSString stringWithFormat:@"%@|%@|%@|%.0f|%.0f|%.0f|%.0f", direction, WBClassName(backgroundView), WBClassName(richTextView), CGRectGetWidth(bubbleRect), CGRectGetHeight(bubbleRect), CGRectGetWidth(richTextRect), CGRectGetHeight(richTextRect)];
-    if ([WBSignatures containsObject:signature] || WBSamples.count >= 16) {
+    if ([WBSignatures containsObject:signature] || WBSamples.count >= 24) {
         return;
     }
     [WBSignatures addObject:signature];
     [WBSamples addObject:@{
         @"direction": direction,
+        @"directionSourceClass": WBClassName(avatarView),
+        @"avatarFrameInCell": WBRectSnapshot(avatarRect),
         @"cellClass": WBClassName(cellView),
         @"cellBounds": WBRectSnapshot(cellView.bounds),
         @"backgroundViewClass": WBClassName(backgroundView),

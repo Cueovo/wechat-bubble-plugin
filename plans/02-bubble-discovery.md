@@ -26,6 +26,17 @@
 8. 确认未支持消息类型能够被可靠排除。
 9. 将临时广泛观察逻辑从 Release 路径删除，仅保留必要能力探测。
 
+## 0.0.3 真机观察事实
+
+- 精确环境：微信 `8.0.60.35`，主可执行文件 `WeChat`。
+- `TextMessageCellView.layoutContentView` Hook 安装成功，观察窗口内触发 44 次，获得 16 个去重样本。
+- `getBgImageView` 稳定返回可见的 `YYAsyncImageView`；`getRichTextView` 稳定返回 `RichTextView`。
+- 单行样本中气泡高 40、文本高 20；多行样本中气泡高 60、文本高 40。
+- 气泡宽度稳定约为文本宽度加 29，气泡高度稳定为文本高度加 20；文本在局部气泡坐标中约为 `x=12, y=10`。
+- 气泡的 `UIImageView.image` 为 nil，未得到可用 `capInsets`，后续不能假设气泡由普通 `UIImage` 属性直接呈现。
+- 气泡局部坐标的 `x` 接近 0，不能用于发送/接收判断；直接子视图 `MMHeadImageView` 的水平位置可区分左右，已观察到约 `x=9` 和 `x=375` 两组。
+- 非文字消息不会进入 `TextMessageCellView` Hook；仍需用混合消息会话确认未命中和复用稳定性。
+
 ## 适配器记录
 
 阶段完成时必须记录：
