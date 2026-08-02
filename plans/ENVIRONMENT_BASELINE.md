@@ -2,7 +2,7 @@
 
 - 检查日期：2026-08-03
 - 对应阶段：[阶段 00：环境与基线](./00-environment-baseline.md)
-- 当前状态：已确认实际环境为 Dopamine RootHide；普通 rootless 0.0.1 经 Convert 后安装且微信无闪退，原生 RootHide 0.0.2 待 CI 和真机验证
+- 当前状态：原生 RootHide 0.0.2 已通过 CI；等待无需 Convert 安装并读取微信 build、主可执行文件和气泡候选类诊断
 
 ## 真机基线
 
@@ -25,10 +25,12 @@
 | Remote | `https://github.com/Cueovo/wechat-bubble-plugin` | `main` 已推送 |
 | 可见性 | 公开 | 已确认 |
 | Package ID | `com.bi8bo.wechat.bubble` | 已确认 |
-| Runner | `macos-15` | 普通 rootless Run 4 已通过；RootHide 待验证 |
-| RootHide Theos | `88506b2c22e9e07dd4ed055f23c9e398a117a2c7` | 已固定，待 CI 验证 |
+| Runner | `macos-15` | 原生 RootHide Run 5 已通过 |
+| RootHide Theos | `88506b2c22e9e07dd4ed055f23c9e398a117a2c7` | Run 5 验证通过 |
 | 已验证旧 Artifact | `wechat-bubble-rootless-7dfe77e3a2b261fc3507e3cb200591309b7f0114` | 0.0.1，需 Convert，不作为后续发布包 |
-| 目标 Artifact | `wechat-bubble-roothide-<commit>` | 0.0.2，必须无需 Convert |
+| 原生 RootHide Artifact | `wechat-bubble-roothide-532012e25446abfe4c97b3a3abed65104f9a03bc` | 0.0.2，8,056 bytes，待真机安装 |
+| RootHide Artifact digest | `sha256:3be70a96e8d1db534cc9796943fc3f68955c45e9410dec8f6034cda7590fa68b` | GitHub artifact digest |
+| RootHide Artifact 到期 | 2026-08-16 18:04:28 UTC | 14 天保留策略 |
 | 旧 Artifact digest | `sha256:66483f14d19d8da5fa19dfb8612579672e8ff8b86cdf7720e6a5048bc70c3ef3` | 仅保留历史记录 |
 
 ## Windows 主机检查
@@ -71,5 +73,5 @@
 - [x] 确认微信 Bundle ID 为 `com.tencent.xin`。
 - [ ] 确认微信 `CFBundleVersion` 和主可执行文件。
 - [x] 由 CI 构建并上传普通 rootless 0.0.1 基线 artifact。
-- [ ] 由 CI 构建并上传原生 RootHide 0.0.2 诊断 artifact。
+- [x] 由 CI 构建并上传原生 RootHide 0.0.2 诊断 artifact。
 - [ ] 下载、无需 Convert 安装并卸载原生 RootHide 测试包。

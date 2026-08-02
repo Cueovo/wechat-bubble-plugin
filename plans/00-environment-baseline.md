@@ -49,9 +49,9 @@
 
 ## 验证清单
 
-- [ ] Theos 能编译一个不注入微信的最小 Objective-C 动态库。
-- [ ] 能生成 `iphoneos-arm64e` 的原生 RootHide `.deb`。
-- [ ] 能确认包无需 RootHide Patcher 转换并可被 Sileo 直接安装。
+- [x] Theos 能编译一个不修改微信 UI 的最小 Objective-C 动态库。
+- [x] 能生成 `iphoneos-arm64e` 的原生 RootHide `.deb`。
+- [x] CI 能确认包不是普通 rootless `/var/jb` 布局。
 - [ ] 能将测试包安装到设备并正常卸载。
 - [ ] 微信在未安装功能 Hook 时正常启动、登录、收发消息。
 - [ ] 精确环境版本已记录，仓库中不存在设备凭据或微信私有数据。
