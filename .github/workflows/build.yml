@@ -1,0 +1,87 @@
+name: Build Rootless Package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  THEOS: ${{ runner.temp }}/theos
+  THEOS_COMMIT: 16362d3aa83a0acd56df4493d575d34306d42478
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Record runner toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "runner_image=${ImageOS:-unknown}"
+            echo "runner_image_version=${ImageVersion:-unknown}"
+            sw_vers
+            xcodebuild -version
+            echo "iphoneos_sdk=$(xcrun --sdk iphoneos --show-sdk-version)"
+            xcrun clang --version
+          } | tee build-manifest.txt
+
+      - name: Install build dependencies
+        shell: bash
+        run: brew install ldid xz dpkg
+
+      - name: Install pinned Theos
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/theos/theos.git "$THEOS"
+          git -C "$THEOS" checkout "$THEOS_COMMIT"
+          git -C "$THEOS" submodule update --init --recursive --depth 1
+          echo "theos_commit=$(git -C "$THEOS" rev-parse HEAD)" | tee -a build-manifest.txt
+          ldid -v 2>&1 | head -n 1 | sed 's/^/ldid=/' | tee -a build-manifest.txt
+          dpkg-deb --version | head -n 1 | sed 's/^/dpkg_deb=/' | tee -a build-manifest.txt
+
+      - name: Build rootless package
+        shell: bash
+        run: |
+          set -euo pipefail
+          make clean package FINALPACKAGE=1
+
+      - name: Validate package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_count="$(find packages -maxdepth 1 -type f -name '*.deb' -print | wc -l | tr -d ' ')"
+          test "$package_count" -eq 1
+          package="$(find packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          dpkg-deb --info "$package" | tee package-info.txt
+          dpkg-deb --contents "$package" | tee package-contents.txt
+          grep -Fq 'Package: com.bi8bo.wechat.bubble' package-info.txt
+          grep -Fq 'Architecture: iphoneos-arm64' package-info.txt
+          grep -Fq 'var/jb/Library/MobileSubstrate/DynamicLibraries/WeChatBubble.dylib' package-contents.txt
+          shasum -a 256 "$package" | tee SHA256SUMS
+
+      - name: Upload package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wechat-bubble-rootless-${{ github.sha }}
+          path: |
+            packages/*.deb
+            SHA256SUMS
+            build-manifest.txt
+            package-info.txt
+            package-contents.txt
+          if-no-files-found: error
+          retention-days: 14
