@@ -11,7 +11,6 @@ permissions:
   contents: read
 
 env:
-  THEOS: ${{ runner.temp }}/theos
   THEOS_COMMIT: 16362d3aa83a0acd56df4493d575d34306d42478
 
 jobs:
@@ -29,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
           {
             echo "runner_image=${ImageOS:-unknown}"
             echo "runner_image_version=${ImageVersion:-unknown}"
