@@ -262,25 +262,6 @@ static void WBRefreshMessageSegments(id object, UIView *cellView) {
     WBRefreshingMessageSegments = NO;
 }
 
-static void WBRefreshAllVisibleMessageCells(void) {
-    Class cellClass = NSClassFromString(@"CommonMessageCellView");
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateUnattached) {
-            continue;
-        }
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            if (window.hidden) {
-                continue;
-            }
-            NSMutableArray<UIView *> *cells = [NSMutableArray array];
-            WBCollectMessageCells(window, cellClass, cells);
-            for (UIView *cell in cells) {
-                WBApplyStyle(cell, YES);
-            }
-        }
-    }
-}
-
 __attribute__((used)) static void WBRefreshAllVisibleMessageCells(void) {
     Class cellClass = NSClassFromString(@"CommonMessageCellView");
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
