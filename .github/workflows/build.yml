@@ -56,7 +56,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make clean package FINALPACKAGE=1
+          make clean package FINALPACKAGE=1 2>&1 | tee build.log
+
+      - name: Report build failure
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("build.log")
+          text = path.read_text(errors="replace")[-12000:] if path.exists() else "build.log was not created"
+          text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=RootHide build failure::{text}")
+          PY
 
       - name: Validate package
         shell: bash
