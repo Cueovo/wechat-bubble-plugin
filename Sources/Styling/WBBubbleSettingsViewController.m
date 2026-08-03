@@ -1,5 +1,6 @@
 #import "WBBubbleSettingsViewController.h"
 #import "WBBubblePreferences.h"
+#import "../Bootstrap/WBSafeMode.h"
 #import <math.h>
 #import <objc/message.h>
 
@@ -31,7 +32,7 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 5;
+    return 6;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -40,7 +41,8 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
         case 1:
         case 2: return 4;
         case 3: return 3;
-        case 4: return 2;
+        case 4: return 1;
+        case 5: return 2;
         default: return 0;
     }
 }
@@ -51,6 +53,7 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
         case 1: return @"浅色模式";
         case 2: return @"深色模式";
         case 3: return @"外观";
+        case 4: return @"安全与恢复";
         default: return nil;
     }
 }
@@ -145,6 +148,16 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
         cell.accessoryView = [self sliderWithMinimum:0.35 maximum:1.0 value:[WBBubblePreferences opacity] action:@selector(opacityChanged:)];
         return cell;
     }
+    if (indexPath.section == 4) {
+        NSDictionary<NSString *, id> *safety = [WBSafeMode snapshot];
+        BOOL active = [safety[@"currentLaunchActive"] boolValue];
+        BOOL recoveryPrepared = [safety[@"nextLaunchRecoveryPrepared"] boolValue];
+        NSString *detail = active ? (recoveryPrepared ? @"下次启动恢复" : @"点击准备恢复") : @"正常";
+        UITableViewCell *cell = [self baseCellWithTitle:@"安全模式" detail:detail];
+        cell.selectionStyle = active && !recoveryPrepared ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
+        cell.accessoryType = active && !recoveryPrepared ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;
+        return cell;
+    }
     NSString *title = indexPath.row == 0 ? @"恢复插件默认主题" : @"恢复微信原始外观";
     UITableViewCell *cell = [self baseCellWithTitle:title detail:nil];
     cell.textLabel.textColor = indexPath.row == 0 ? self.view.tintColor : UIColor.systemRedColor;
@@ -164,7 +177,17 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
         [self presentViewController:picker animated:YES completion:nil];
         return;
     }
-    if (indexPath.section != 4) {
+    if (indexPath.section == 4) {
+        if (![WBSafeMode prepareRecoveryForNextLaunch]) {
+            return;
+        }
+        [self.tableView reloadData];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"已准备恢复" message:@"本次启动继续保持安全模式。完全结束并重新打开微信后，将重新尝试启用聊天气泡。" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    if (indexPath.section != 5) {
         return;
     }
     BOOL resetTheme = indexPath.row == 0;

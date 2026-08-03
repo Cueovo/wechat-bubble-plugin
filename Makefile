@@ -10,6 +10,7 @@ TWEAK_NAME = WeChatBubble
 WeChatBubble_FILES = \
 	Sources/TweakEntry.m \
 	Sources/Bootstrap/WBProcessGuard.m \
+	Sources/Bootstrap/WBSafeMode.m \
 	Sources/Bootstrap/WBVersionGate.m \
 	Sources/Discovery/WBCapabilityRegistry.m \
 	Sources/Discovery/WBDiagnostics.m \

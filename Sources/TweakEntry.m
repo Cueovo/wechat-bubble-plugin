@@ -1,7 +1,9 @@
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
 #import <mach-o/dyld.h>
 #import "Bootstrap/WBProcessGuard.h"
+#import "Bootstrap/WBSafeMode.h"
 #import "Bootstrap/WBVersionGate.h"
 #import "Discovery/WBCapabilityRegistry.h"
 #import "Discovery/WBDiagnostics.h"
@@ -9,30 +11,44 @@
 #import "Styling/WBBubblePreferences.h"
 #import "Styling/WBBubbleSettingsHook.h"
 
-NSString * const WeChatBubbleBuildStage = @"preferences";
+NSString * const WeChatBubbleBuildStage = @"safety";
+
+static BOOL WBStyleHookInstalled;
+static BOOL WBStableLaunchConfirmationScheduled;
+static NSUInteger WBStableLaunchConfirmationGeneration;
+static NSTimeInterval WBStableForegroundStartedAt;
+
+static BOOL WBAllowsStyling(void) {
+    return [WBVersionGate allowsUIModification] && ![WBSafeMode isActive];
+}
 
 static void WBRunBootstrap(BOOL hookInstalled) {
     if (![WBProcessGuard isWeChatMainProcess]) {
         return;
     }
-    BOOL activationAllowed = [WBVersionGate allowsUIModification];
+    BOOL versionAllowed = [WBVersionGate allowsUIModification];
+    BOOL activationAllowed = versionAllowed && ![WBSafeMode isActive];
     NSMutableDictionary<NSString *, id> *styling = [[WBTextBubbleStyleHook configurationSnapshot] mutableCopy];
     styling[@"activationAllowed"] = @(activationAllowed);
     styling[@"hookInstalled"] = @(hookInstalled);
-    if (!activationAllowed) {
+    if (!versionAllowed) {
         styling[@"mode"] = @"disabled";
         styling[@"reason"] = @"unsupported-wechat-version";
+    } else if ([WBSafeMode isActive]) {
+        styling[@"mode"] = @"disabled";
+        styling[@"reason"] = @"safe-mode-active";
     } else if (!hookInstalled) {
         styling[@"mode"] = @"disabled";
         styling[@"reason"] = @"required-runtime-capability-missing";
     }
     NSDictionary<NSString *, id> *snapshot = @{
-        @"diagnosticsFormat": @9,
-        @"pluginVersion": @"0.3.3",
+        @"diagnosticsFormat": @10,
+        @"pluginVersion": @"0.4.0",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],
         @"versionGate": [WBVersionGate snapshot],
+        @"safety": [WBSafeMode snapshot],
         @"discovery": @{
             @"mode": @"validated",
             @"explorationHookInstalled": @NO,
@@ -52,15 +68,44 @@ static void WBRunBootstrap(BOOL hookInstalled) {
     NSLog(@"[WeChatBubble] bootstrap=%@ diagnostics=%@", fileURL ? @"complete" : @"failed", fileURL.lastPathComponent ?: @"");
 }
 
+static void WBScheduleStableLaunchConfirmation(void) {
+    if (WBStableLaunchConfirmationScheduled) {
+        return;
+    }
+    WBStableLaunchConfirmationScheduled = YES;
+    WBStableForegroundStartedAt = NSProcessInfo.processInfo.systemUptime;
+    NSUInteger generation = ++WBStableLaunchConfirmationGeneration;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)([WBSafeMode stableLaunchWindow] * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (generation != WBStableLaunchConfirmationGeneration) {
+            return;
+        }
+        WBStableLaunchConfirmationScheduled = NO;
+        NSTimeInterval activeDuration = NSProcessInfo.processInfo.systemUptime - WBStableForegroundStartedAt;
+        if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive || activeDuration < [WBSafeMode stableLaunchWindow]) {
+            return;
+        }
+        [WBSafeMode markLaunchSuccessful];
+        WBRunBootstrap(WBStyleHookInstalled);
+    });
+}
+
+static void WBCancelStableLaunchConfirmation(void) {
+    WBStableLaunchConfirmationScheduled = NO;
+    WBStableForegroundStartedAt = 0.0;
+    WBStableLaunchConfirmationGeneration++;
+}
+
 static void WBAttemptInstallAndBootstrap(NSUInteger attempt) {
-    if (![WBVersionGate allowsUIModification]) {
+    if ([WBVersionGate allowsUIModification]) {
+        [WBBubbleSettingsHook installIfPossible];
+    }
+    if (!WBAllowsStyling()) {
         WBRunBootstrap(NO);
         return;
     }
-    [WBBubbleSettingsHook installIfPossible];
-    BOOL hookInstalled = [WBTextBubbleStyleHook install];
-    if (hookInstalled || attempt >= 40) {
-        WBRunBootstrap(hookInstalled);
+    WBStyleHookInstalled = [WBTextBubbleStyleHook install];
+    if (WBStyleHookInstalled || attempt >= 40) {
+        WBRunBootstrap(WBStyleHookInstalled);
         return;
     }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -72,7 +117,9 @@ static void WBImageAdded(const struct mach_header *header, intptr_t slide) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([WBVersionGate allowsUIModification]) {
             [WBBubbleSettingsHook installIfPossible];
-            [WBTextBubbleStyleHook install];
+        }
+        if (WBAllowsStyling()) {
+            WBStyleHookInstalled = [WBTextBubbleStyleHook install] || WBStyleHookInstalled;
         }
     });
 }
@@ -83,16 +130,26 @@ static void WBInitialize(void) {
         if (![WBProcessGuard isWeChatMainProcess]) {
             return;
         }
+        [WBSafeMode beginLaunch];
         _dyld_register_func_for_add_image(WBImageAdded);
-        BOOL activationAllowed = [WBVersionGate allowsUIModification];
-        if (activationAllowed) {
+        BOOL versionAllowed = [WBVersionGate allowsUIModification];
+        if (versionAllowed) {
             [WBBubbleSettingsHook installIfPossible];
         }
-        BOOL hookInstalled = activationAllowed && [WBTextBubbleStyleHook install];
+        WBStyleHookInstalled = WBAllowsStyling() && [WBTextBubbleStyleHook install];
         dispatch_async(dispatch_get_main_queue(), ^{
             static dispatch_once_t onceToken;
             dispatch_once(&onceToken, ^{
-                if (hookInstalled) {
+                [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *notification) {
+                    WBScheduleStableLaunchConfirmation();
+                }];
+                [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *notification) {
+                    WBCancelStableLaunchConfirmation();
+                }];
+                if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive) {
+                    WBScheduleStableLaunchConfirmation();
+                }
+                if (WBStyleHookInstalled) {
                     WBRunBootstrap(YES);
                 } else {
                     WBAttemptInstallAndBootstrap(0);
