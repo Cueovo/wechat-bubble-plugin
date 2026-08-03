@@ -11,10 +11,17 @@ static BOOL WBSettingsHookInstalled;
 static BOOL WBSettingsEntryAvailable;
 static BOOL WBSettingsEntryModelAdded;
 static BOOL WBSettingsTableInfoAvailable;
+static BOOL WBSettingsTableManagerAvailable;
 static BOOL WBSettingsAPISignaturesValid;
 static BOOL WBSettingsTableReloaded;
 static BOOL WBSettingsHookUsesReloadTableData;
+static BOOL WBSettingsPluginsPortalAvailable;
+static BOOL WBSettingsPluginsPortalRegistered;
+static BOOL WBSettingsPluginsPortalDidRegister;
+static BOOL WBSettingsDuplicateEntryFound;
 static NSString *WBSettingsLifecycleName = @"unavailable";
+static NSString *WBSettingsModelPath = @"unavailable";
+static NSString *WBSettingsInsertionMethod = @"none";
 static NSString *WBSettingsEntryReason = @"not-attempted";
 static const void *WBSettingsEntryAddedKey = &WBSettingsEntryAddedKey;
 static const void *WBSettingsLifecycleInProgressKey = &WBSettingsLifecycleInProgressKey;
@@ -54,18 +61,21 @@ static BOOL WBIntegerArgumentMatches(Method method, unsigned int index) {
     return type == 'c' || type == 'C' || type == 's' || type == 'S' || type == 'i' || type == 'I' || type == 'l' || type == 'L' || type == 'q' || type == 'Q' || type == 'B';
 }
 
+static BOOL WBNoArgumentObjectMethodMatches(Method method) {
+    return method && method_getNumberOfArguments(method) == 2 && WBReturnMatches(method, '@') && WBArgumentMatches(method, 0, '@') && WBArgumentMatches(method, 1, ':');
+}
+
 static BOOL WBNoArgumentVoidMethodMatches(Method method) {
     return method && method_getNumberOfArguments(method) == 2 && WBReturnMatches(method, 'v') && WBArgumentMatches(method, 0, '@') && WBArgumentMatches(method, 1, ':');
 }
 
-static BOOL WBSettingsAPISignaturesMatch(Class cellInfoClass, Class sectionInfoClass, id tableViewInfo, SEL cellSelector, SEL sectionSelector, SEL addCellSelector, SEL addSectionSelector) {
-    Method cellMethod = class_getClassMethod(cellInfoClass, cellSelector);
-    Method sectionMethod = class_getClassMethod(sectionInfoClass, sectionSelector);
-    Method addCellMethod = class_getInstanceMethod(sectionInfoClass, addCellSelector);
-    Method addSectionMethod = class_getInstanceMethod(object_getClass(tableViewInfo), addSectionSelector);
-    BOOL addCellReturnValid = WBReturnMatches(addCellMethod, 'v') || WBReturnMatches(addCellMethod, '@');
-    BOOL addSectionReturnValid = WBReturnMatches(addSectionMethod, 'v') || WBReturnMatches(addSectionMethod, '@');
-    return cellMethod && method_getNumberOfArguments(cellMethod) == 6 && WBReturnMatches(cellMethod, '@') && WBArgumentMatches(cellMethod, 2, ':') && WBArgumentMatches(cellMethod, 3, '@') && WBArgumentMatches(cellMethod, 4, '@') && WBIntegerArgumentMatches(cellMethod, 5) && sectionMethod && method_getNumberOfArguments(sectionMethod) == 2 && WBReturnMatches(sectionMethod, '@') && addCellMethod && method_getNumberOfArguments(addCellMethod) == 3 && addCellReturnValid && WBArgumentMatches(addCellMethod, 2, '@') && addSectionMethod && method_getNumberOfArguments(addSectionMethod) == 3 && addSectionReturnValid && WBArgumentMatches(addSectionMethod, 2, '@');
+static BOOL WBObjectArgumentMethodMatches(Method method) {
+    BOOL returnValid = WBReturnMatches(method, 'v') || WBReturnMatches(method, '@');
+    return method && method_getNumberOfArguments(method) == 3 && returnValid && WBArgumentMatches(method, 0, '@') && WBArgumentMatches(method, 1, ':') && WBArgumentMatches(method, 2, '@');
+}
+
+static BOOL WBCellFactoryMethodMatches(Method method) {
+    return method && method_getNumberOfArguments(method) == 6 && WBReturnMatches(method, '@') && WBArgumentMatches(method, 0, '@') && WBArgumentMatches(method, 1, ':') && WBArgumentMatches(method, 2, ':') && WBArgumentMatches(method, 3, '@') && WBArgumentMatches(method, 4, '@') && WBIntegerArgumentMatches(method, 5);
 }
 
 static void WBSendObjectArgument(id target, SEL selector, id argument, Method method) {
@@ -73,6 +83,14 @@ static void WBSendObjectArgument(id target, SEL selector, id argument, Method me
         ((id (*)(id, SEL, id))objc_msgSend)(target, selector, argument);
     } else {
         ((void (*)(id, SEL, id))objc_msgSend)(target, selector, argument);
+    }
+}
+
+static void WBSendObjectIntegerArguments(id target, SEL selector, id argument, unsigned int index, Method method) {
+    if (WBReturnMatches(method, '@')) {
+        ((id (*)(id, SEL, id, unsigned int))objc_msgSend)(target, selector, argument, index);
+    } else {
+        ((void (*)(id, SEL, id, unsigned int))objc_msgSend)(target, selector, argument, index);
     }
 }
 
@@ -86,12 +104,58 @@ static id WBIvarValue(id object, NSString *name) {
     return ivar ? object_getIvar(object, ivar) : nil;
 }
 
-static BOOL WBReloadSettingsTable(id object, id tableViewInfo) {
+static id WBSafeValueForKey(id object, NSString *key) {
+    @try {
+        return [object valueForKey:key];
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static id WBObjectFromNoArgumentSelector(id object, SEL selector) {
+    Method method = class_getInstanceMethod(object_getClass(object), selector);
+    return WBNoArgumentObjectMethodMatches(method) ? ((id (*)(id, SEL))objc_msgSend)(object, selector) : nil;
+}
+
+static NSArray *WBSettingsSections(id tableManager) {
+    id sections = WBObjectFromNoArgumentSelector(tableManager, NSSelectorFromString(@"getAllSections"));
+    if (![sections isKindOfClass:NSArray.class]) {
+        sections = WBSafeValueForKey(tableManager, @"sections");
+    }
+    return [sections isKindOfClass:NSArray.class] ? sections : nil;
+}
+
+static NSArray *WBSettingsCells(id section) {
+    id cells = WBObjectFromNoArgumentSelector(section, NSSelectorFromString(@"getAllCells"));
+    if (![cells isKindOfClass:NSArray.class]) {
+        cells = WBSafeValueForKey(section, @"cells");
+    }
+    return [cells isKindOfClass:NSArray.class] ? cells : nil;
+}
+
+static NSString *WBSettingsCellTitle(id cell) {
+    id cellConfig = WBSafeValueForKey(cell, @"cellConfig");
+    id leftConfig = WBSafeValueForKey(cellConfig, @"leftConfig");
+    id title = WBSafeValueForKey(leftConfig, @"title");
+    return [title isKindOfClass:NSString.class] ? [title stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] : nil;
+}
+
+static BOOL WBTableManagerContainsTitle(id tableManager, NSSet<NSString *> *titles) {
+    for (id section in WBSettingsSections(tableManager)) {
+        for (id cell in WBSettingsCells(section)) {
+            NSString *title = WBSettingsCellTitle(cell);
+            if (title.length > 0 && [titles containsObject:title]) {
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
+static BOOL WBReloadSettingsTable(id object, id tableModel) {
     id tableView = WBIvarValue(object, @"m_tableView");
-    SEL getTableViewSelector = NSSelectorFromString(@"getTableView");
-    Method getTableViewMethod = class_getInstanceMethod(object_getClass(tableViewInfo), getTableViewSelector);
-    if (![tableView respondsToSelector:@selector(reloadData)] && getTableViewMethod && method_getNumberOfArguments(getTableViewMethod) == 2 && WBReturnMatches(getTableViewMethod, '@') && WBArgumentMatches(getTableViewMethod, 0, '@') && WBArgumentMatches(getTableViewMethod, 1, ':')) {
-        tableView = ((id (*)(id, SEL))objc_msgSend)(tableViewInfo, getTableViewSelector);
+    if (![tableView respondsToSelector:@selector(reloadData)]) {
+        tableView = WBObjectFromNoArgumentSelector(tableModel, NSSelectorFromString(@"getTableView"));
     }
     if (![tableView respondsToSelector:@selector(reloadData)]) {
         return NO;
@@ -101,12 +165,135 @@ static BOOL WBReloadSettingsTable(id object, id tableViewInfo) {
 }
 
 static void WBOpenBubbleSettings(id object, __unused SEL selector) {
-    UIViewController *controller = [object isKindOfClass:UIViewController.class] ? object : nil;
-    if (!controller.navigationController) {
+    id navigationController = WBSafeValueForKey(object, @"navigationController");
+    if (![navigationController respondsToSelector:@selector(pushViewController:animated:)]) {
         return;
     }
     WBBubbleSettingsViewController *settings = [[WBBubbleSettingsViewController alloc] init];
-    [controller.navigationController pushViewController:settings animated:YES];
+    ((void (*)(id, SEL, id, BOOL))objc_msgSend)(navigationController, @selector(pushViewController:animated:), settings, YES);
+}
+
+static void WBResetSettingsEntryState(void) {
+    WBSettingsEntryAvailable = NO;
+    WBSettingsEntryModelAdded = NO;
+    WBSettingsTableInfoAvailable = NO;
+    WBSettingsTableManagerAvailable = NO;
+    WBSettingsAPISignaturesValid = NO;
+    WBSettingsTableReloaded = NO;
+    WBSettingsPluginsPortalAvailable = NO;
+    WBSettingsPluginsPortalRegistered = NO;
+    WBSettingsDuplicateEntryFound = NO;
+    WBSettingsModelPath = @"unavailable";
+    WBSettingsInsertionMethod = @"none";
+}
+
+static BOOL WBRegisterPluginsPortal(id object, id tableManager) {
+    NSSet<NSString *> *portalTitles = [NSSet setWithObjects:@"插件", @"插件管理", nil];
+    WBSettingsPluginsPortalAvailable = WBIvarValue(object, @"_pluginCellInfo") != nil || WBTableManagerContainsTitle(tableManager, portalTitles);
+    if (!WBSettingsPluginsPortalAvailable) {
+        return NO;
+    }
+    if (WBSettingsPluginsPortalDidRegister) {
+        WBSettingsPluginsPortalRegistered = YES;
+        WBSettingsEntryAvailable = YES;
+        WBSettingsAPISignaturesValid = YES;
+        WBSettingsModelPath = @"WCPluginsMgr";
+        WBSettingsInsertionMethod = @"registerControllerWithTitle:version:controller:";
+        WBSettingsEntryReason = @"already-registered-to-plugins-portal";
+        return YES;
+    }
+    Class managerClass = NSClassFromString(@"WCPluginsMgr");
+    SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
+    SEL registerSelector = NSSelectorFromString(@"registerControllerWithTitle:version:controller:");
+    Method sharedMethod = managerClass ? class_getClassMethod(managerClass, sharedSelector) : NULL;
+    if (!WBNoArgumentObjectMethodMatches(sharedMethod)) {
+        return NO;
+    }
+    id manager = ((id (*)(id, SEL))objc_msgSend)(managerClass, sharedSelector);
+    Method registerMethod = manager ? class_getInstanceMethod(object_getClass(manager), registerSelector) : NULL;
+    if (!registerMethod || method_getNumberOfArguments(registerMethod) != 5 || !WBReturnMatches(registerMethod, 'v') || !WBArgumentMatches(registerMethod, 0, '@') || !WBArgumentMatches(registerMethod, 1, ':') || !WBArgumentMatches(registerMethod, 2, '@') || !WBArgumentMatches(registerMethod, 3, '@') || !WBArgumentMatches(registerMethod, 4, '@')) {
+        return NO;
+    }
+    ((void (*)(id, SEL, id, id, id))objc_msgSend)(manager, registerSelector, @"聊天气泡", @"0.3.2", NSStringFromClass(WBBubbleSettingsViewController.class));
+    WBSettingsPluginsPortalDidRegister = YES;
+    WBSettingsPluginsPortalRegistered = YES;
+    WBSettingsEntryAvailable = YES;
+    WBSettingsAPISignaturesValid = YES;
+    WBSettingsModelPath = @"WCPluginsMgr";
+    WBSettingsInsertionMethod = @"registerControllerWithTitle:version:controller:";
+    WBSettingsEntryReason = @"registered-to-plugins-portal";
+    return YES;
+}
+
+static BOOL WBAddModernSettingsEntry(id object, id tableManager) {
+    Class cellClass = NSClassFromString(@"WCTableViewNormalCellManager");
+    Class sectionClass = NSClassFromString(@"WCTableViewSectionManager");
+    SEL cellSelector = NSSelectorFromString(@"normalCellForSel:target:title:accessoryType:");
+    SEL sectionSelector = NSSelectorFromString(@"sectionInfoDefaut");
+    SEL addCellSelector = NSSelectorFromString(@"addCell:");
+    SEL insertSectionSelector = NSSelectorFromString(@"insertSection:At:");
+    Method cellMethod = class_getClassMethod(cellClass, cellSelector);
+    Method sectionMethod = class_getClassMethod(sectionClass, sectionSelector);
+    Method addCellMethod = class_getInstanceMethod(sectionClass, addCellSelector);
+    Method insertSectionMethod = class_getInstanceMethod(object_getClass(tableManager), insertSectionSelector);
+    BOOL insertReturnValid = WBReturnMatches(insertSectionMethod, 'v') || WBReturnMatches(insertSectionMethod, '@');
+    WBSettingsAPISignaturesValid = WBCellFactoryMethodMatches(cellMethod) && WBNoArgumentObjectMethodMatches(sectionMethod) && WBObjectArgumentMethodMatches(addCellMethod) && insertSectionMethod && method_getNumberOfArguments(insertSectionMethod) == 4 && insertReturnValid && WBArgumentMatches(insertSectionMethod, 0, '@') && WBArgumentMatches(insertSectionMethod, 1, ':') && WBArgumentMatches(insertSectionMethod, 2, '@') && WBIntegerArgumentMatches(insertSectionMethod, 3);
+    if (!WBSettingsAPISignaturesValid) {
+        return NO;
+    }
+    if (WBTableManagerContainsTitle(tableManager, [NSSet setWithObject:@"聊天气泡"])) {
+        WBSettingsDuplicateEntryFound = YES;
+        WBSettingsEntryAvailable = YES;
+        WBSettingsModelPath = @"WCTableViewManager";
+        WBSettingsInsertionMethod = @"existing-cell";
+        WBSettingsEntryReason = @"entry-already-present";
+        return YES;
+    }
+    id cell = ((id (*)(id, SEL, SEL, id, id, NSInteger))objc_msgSend)(cellClass, cellSelector, NSSelectorFromString(@"wb_openBubbleSettings"), object, @"聊天气泡", UITableViewCellAccessoryDisclosureIndicator);
+    id section = ((id (*)(id, SEL))objc_msgSend)(sectionClass, sectionSelector);
+    if (!cell || !section) {
+        return NO;
+    }
+    WBSendObjectArgument(section, addCellSelector, cell, addCellMethod);
+    WBSendObjectIntegerArguments(tableManager, insertSectionSelector, section, 0, insertSectionMethod);
+    WBSettingsEntryModelAdded = YES;
+    WBSettingsEntryAvailable = YES;
+    WBSettingsModelPath = @"WCTableViewManager";
+    WBSettingsInsertionMethod = @"insertSection:At:";
+    WBSettingsTableReloaded = WBReloadSettingsTable(object, tableManager);
+    WBSettingsEntryReason = WBSettingsTableReloaded ? @"modern-entry-added-table-reloaded" : @"modern-entry-added-table-unavailable";
+    return YES;
+}
+
+static BOOL WBAddLegacySettingsEntry(id object, id tableViewInfo) {
+    Class cellClass = NSClassFromString(@"MMTableViewCellInfo");
+    Class sectionClass = NSClassFromString(@"MMTableViewSectionInfo");
+    SEL cellSelector = NSSelectorFromString(@"normalCellForSel:target:title:accessoryType:");
+    SEL sectionSelector = NSSelectorFromString(@"sectionInfoDefaut");
+    SEL addCellSelector = NSSelectorFromString(@"addCell:");
+    SEL addSectionSelector = NSSelectorFromString(@"addSection:");
+    Method cellMethod = class_getClassMethod(cellClass, cellSelector);
+    Method sectionMethod = class_getClassMethod(sectionClass, sectionSelector);
+    Method addCellMethod = class_getInstanceMethod(sectionClass, addCellSelector);
+    Method addSectionMethod = class_getInstanceMethod(object_getClass(tableViewInfo), addSectionSelector);
+    WBSettingsAPISignaturesValid = WBCellFactoryMethodMatches(cellMethod) && WBNoArgumentObjectMethodMatches(sectionMethod) && WBObjectArgumentMethodMatches(addCellMethod) && WBObjectArgumentMethodMatches(addSectionMethod);
+    if (!WBSettingsAPISignaturesValid) {
+        return NO;
+    }
+    id cell = ((id (*)(id, SEL, SEL, id, id, NSInteger))objc_msgSend)(cellClass, cellSelector, NSSelectorFromString(@"wb_openBubbleSettings"), object, @"聊天气泡", UITableViewCellAccessoryDisclosureIndicator);
+    id section = ((id (*)(id, SEL))objc_msgSend)(sectionClass, sectionSelector);
+    if (!cell || !section) {
+        return NO;
+    }
+    WBSendObjectArgument(section, addCellSelector, cell, addCellMethod);
+    WBSendObjectArgument(tableViewInfo, addSectionSelector, section, addSectionMethod);
+    WBSettingsEntryModelAdded = YES;
+    WBSettingsEntryAvailable = YES;
+    WBSettingsModelPath = @"MMTableViewInfo";
+    WBSettingsInsertionMethod = @"addSection:";
+    WBSettingsTableReloaded = WBReloadSettingsTable(object, tableViewInfo);
+    WBSettingsEntryReason = WBSettingsTableReloaded ? @"legacy-entry-added-table-reloaded" : @"legacy-entry-added-table-unavailable";
+    return YES;
 }
 
 static BOOL WBAddSettingsEntry(id object) {
@@ -114,44 +301,21 @@ static BOOL WBAddSettingsEntry(id object) {
         WBSettingsEntryReason = @"already-added";
         return YES;
     }
-    WBSettingsEntryAvailable = NO;
-    WBSettingsEntryModelAdded = NO;
-    WBSettingsTableInfoAvailable = NO;
-    WBSettingsAPISignaturesValid = NO;
-    WBSettingsTableReloaded = NO;
+    WBResetSettingsEntryState();
+    id tableManager = WBIvarValue(object, @"m_tableViewMgr");
+    WBSettingsTableManagerAvailable = tableManager != nil;
+    if (tableManager && (WBRegisterPluginsPortal(object, tableManager) || WBAddModernSettingsEntry(object, tableManager))) {
+        objc_setAssociatedObject(object, WBSettingsEntryAddedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return YES;
+    }
     id tableViewInfo = WBIvarValue(object, @"m_tableViewInfo");
     WBSettingsTableInfoAvailable = tableViewInfo != nil;
-    if (!tableViewInfo) {
-        WBSettingsEntryReason = @"table-info-unavailable";
-        return NO;
+    if (tableViewInfo && WBAddLegacySettingsEntry(object, tableViewInfo)) {
+        objc_setAssociatedObject(object, WBSettingsEntryAddedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return YES;
     }
-    Class cellInfoClass = NSClassFromString(@"MMTableViewCellInfo");
-    Class sectionInfoClass = NSClassFromString(@"MMTableViewSectionInfo");
-    SEL cellSelector = NSSelectorFromString(@"normalCellForSel:target:title:accessoryType:");
-    SEL sectionSelector = NSSelectorFromString(@"sectionInfoDefaut");
-    SEL addCellSelector = NSSelectorFromString(@"addCell:");
-    SEL addSectionSelector = NSSelectorFromString(@"addSection:");
-    WBSettingsAPISignaturesValid = [cellInfoClass respondsToSelector:cellSelector] && [sectionInfoClass respondsToSelector:sectionSelector] && [tableViewInfo respondsToSelector:addSectionSelector] && WBSettingsAPISignaturesMatch(cellInfoClass, sectionInfoClass, tableViewInfo, cellSelector, sectionSelector, addCellSelector, addSectionSelector);
-    if (!WBSettingsAPISignaturesValid) {
-        WBSettingsEntryReason = @"private-api-signature-mismatch";
-        return NO;
-    }
-    id cellInfo = ((id (*)(id, SEL, SEL, id, id, NSInteger))objc_msgSend)(cellInfoClass, cellSelector, NSSelectorFromString(@"wb_openBubbleSettings"), object, @"聊天气泡", UITableViewCellAccessoryDisclosureIndicator);
-    id sectionInfo = ((id (*)(id, SEL))objc_msgSend)(sectionInfoClass, sectionSelector);
-    if (!cellInfo || !sectionInfo || ![sectionInfo respondsToSelector:addCellSelector]) {
-        WBSettingsEntryReason = @"entry-model-creation-failed";
-        return NO;
-    }
-    Method addCellMethod = class_getInstanceMethod(sectionInfoClass, addCellSelector);
-    Method addSectionMethod = class_getInstanceMethod(object_getClass(tableViewInfo), addSectionSelector);
-    WBSendObjectArgument(sectionInfo, addCellSelector, cellInfo, addCellMethod);
-    WBSendObjectArgument(tableViewInfo, addSectionSelector, sectionInfo, addSectionMethod);
-    WBSettingsEntryModelAdded = YES;
-    WBSettingsEntryAvailable = YES;
-    WBSettingsTableReloaded = WBReloadSettingsTable(object, tableViewInfo);
-    WBSettingsEntryReason = WBSettingsTableReloaded ? @"entry-model-added-table-reloaded" : @"entry-model-added-table-unavailable";
-    objc_setAssociatedObject(object, WBSettingsEntryAddedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    return WBSettingsEntryAvailable;
+    WBSettingsEntryReason = tableManager || tableViewInfo ? @"private-api-signature-mismatch" : @"settings-table-model-unavailable";
+    return NO;
 }
 
 static NSDictionary<NSString *, id> *WBSettingsConfigurationSnapshot(void) {
@@ -162,7 +326,13 @@ static NSDictionary<NSString *, id> *WBSettingsConfigurationSnapshot(void) {
         @"entryAvailable": @(WBSettingsEntryAvailable),
         @"entryModelAdded": @(WBSettingsEntryModelAdded),
         @"visibilityVerified": @NO,
+        @"tableManagerAvailable": @(WBSettingsTableManagerAvailable),
         @"tableInfoAvailable": @(WBSettingsTableInfoAvailable),
+        @"pluginsPortalAvailable": @(WBSettingsPluginsPortalAvailable),
+        @"pluginsPortalRegistered": @(WBSettingsPluginsPortalRegistered),
+        @"duplicateEntryFound": @(WBSettingsDuplicateEntryFound),
+        @"modelPath": WBSettingsModelPath,
+        @"insertionMethod": WBSettingsInsertionMethod,
         @"apiSignaturesValid": @(WBSettingsAPISignaturesValid),
         @"tableReloaded": @(WBSettingsTableReloaded),
         @"reason": WBSettingsEntryReason

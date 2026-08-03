@@ -1,7 +1,7 @@
 # iOS 微信聊天气泡插件技术路线（MVP）
 
 - 决策日期：2026-08-03
-- 文档状态：阶段 01/02/03 已完成；阶段 04 的 0.3.0 主题生效但设置入口真机失败，0.3.1 生命周期修复已由 Build #35 构建成功、等待真机复测；阶段 05/06 尚未完成
+- 文档状态：阶段 01/02/03 已完成；阶段 04 的 0.3.0/0.3.1 设置入口真机失败，0.3.2 已迁移到插件归纳或 `m_tableViewMgr` 现代模型、等待构建和真机复测；阶段 05/06 尚未完成
 - 项目阶段：MVP
 - 目标：仅修改本机 iOS 微信聊天界面的消息气泡外观
 - 计划分发：公开分发
@@ -78,15 +78,15 @@
 
 `WBBubblePreferences` 默认注册 `enabled=YES`，所以白名单和能力检查通过时，首次安装无需设置即可显示固定主题。用户不能据此推断“设置与持久化阶段已经完成”。
 
-以上结论专指历史上的 0.2.1/Build #31。0.3.0/Build #32 已把设置源码、schema 2 偏好和即时刷新纳入 RootHide 包并通过 CI；真机确认气泡核心和主题生效，但 `viewDidLoad` 注入的设置 section 未显示。当前 0.3.1 改为在微信 `reloadTableData` 完成模型重建后插入并刷新表格，仍需新的 CI 与真机入口复测。
+以上结论专指历史上的 0.2.1/Build #31。0.3.0/Build #32 已把设置源码、schema 2 偏好和即时刷新纳入 RootHide 包并通过 CI；真机确认气泡核心和主题生效，但设置入口未显示。0.3.1/Build #35/#36 修正了生命周期和表格刷新，真机仍失败；对照新版微信实现后确认旧 `m_tableViewInfo` 不是设置页当前可见模型。0.3.2 改为优先注册现有插件归纳入口，否则直接修改 `m_tableViewMgr`，旧模型仅作兼容回退。
 
 ### 1.6 诊断文件与判定标准
 
-插件启动后应在微信应用容器的 `Library/Caches/WeChatBubble/diagnostics.plist` 写入诊断快照。0.3.1 修复包的预期基线至少满足：
+插件启动后应在微信应用容器的 `Library/Caches/WeChatBubble/diagnostics.plist` 写入诊断快照。0.3.2 修复包的预期基线至少满足：
 
 ```text
-pluginVersion = 0.3.1
-diagnosticsFormat = 7
+pluginVersion = 0.3.2
+diagnosticsFormat = 8
 buildStage = preferences
 process.isWeChatMainProcess = true
 versionGate.shortVersion = 8.0.60
@@ -98,7 +98,7 @@ settings.hookInstalled = true
 settings.lifecycleSelector = reloadTableData
 ```
 
-启动快照中的 `settings.entryAvailable=false` 只表示设置页生命周期尚未执行。进入微信设置页后，0.3.1 会回写入口构建结果；成功路径应至少有 `entryModelAdded=true`、`tableReloaded=true`，并由真机目视确认入口唯一且可打开。若 `uiModificationAllowed=false`，说明版本门控阻止了 Hook；若它为 `true` 而 `styling.hookInstalled=false`，说明必要私有类或 Selector 未满足。
+启动快照中的 `settings.entryAvailable=false` 只表示设置页生命周期尚未执行。进入微信设置页后，0.3.2 应选择以下成功路径之一：存在插件归纳时 `modelPath=WCPluginsMgr` 且 `pluginsPortalRegistered=true`；否则 `modelPath=WCTableViewManager`、`insertionMethod=insertSection:At:`、`entryModelAdded=true` 且 `tableReloaded=true`。旧 `MMTableViewInfo` 只允许作为现代路径不可用时的兼容回退。最终仍需真机目视确认入口唯一且可打开。
 
 还需修正一个口径问题：当前代码会临时取得 `CMessageWrap`，调用发送方判定方法，并读取服务端或本地消息 ID 来合并超长消息片段。它没有读取消息正文、数据库、联系人或账号凭据，也没有持久化这些 ID，但这仍属于“读取最小消息元数据”。因此当前诊断中的 `messageDataRead=NO` 和文档中的“完全不接触消息模型”并不严谨。公开测试前必须二选一：
 
