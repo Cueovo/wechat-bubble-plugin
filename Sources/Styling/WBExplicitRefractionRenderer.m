@@ -1,9 +1,9 @@
-#define CI_SILENCE_GL_DEPRECATION 1
 #import "WBExplicitRefractionRenderer.h"
 #import "../Discovery/WBDiagnostics.h"
 #import <CoreImage/CoreImage.h>
 #import <QuartzCore/QuartzCore.h>
 #import <math.h>
+#import <objc/message.h>
 
 static BOOL WBExplicitCapabilityProbed;
 static BOOL WBExplicitCapabilityAvailable;
@@ -24,7 +24,8 @@ static CIWarpKernel *WBExplicitWarpKernel(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         NSString *source = @"kernel vec2 wbLens(vec2 center, vec2 halfSize, float radius, float edgeWidth, float amount) { vec2 coordinate = destCoord(); vec2 p = coordinate - center; vec2 q = abs(p) - (halfSize - vec2(radius)); vec2 outside = max(q, vec2(0.0)); float distance = length(outside) + min(max(q.x, q.y), 0.0) - radius; float depth = clamp(1.0 + distance / edgeWidth, 0.0, 1.0); float profile = 1.0 - sqrt(max(0.0, 1.0 - depth * depth)); vec2 normal; if (q.x > q.y) { normal = vec2(sign(p.x), 0.0); } else { normal = vec2(0.0, sign(p.y)); } if (q.x > 0.0 && q.y > 0.0) { normal = normalize(outside * sign(p)); } return coordinate + normal * amount * profile; }";
-        kernel = [CIWarpKernel kernelWithString:source];
+        SEL selector = NSSelectorFromString(@"kernelWithString:");
+        kernel = [CIWarpKernel respondsToSelector:selector] ? ((id (*)(id, SEL, id))objc_msgSend)(CIWarpKernel.class, selector, source) : nil;
     });
     return kernel;
 }
