@@ -39,20 +39,27 @@
 - 接收侧浅色为 `#E8F0FF`，发送侧浅色为 `#DCC8FF`；深色分别为 `#26344A` 和 `#4C3E70`。
 - 自有 `CAShapeLayer` 固定插入气泡 layer 的第 0 个子层，位于异步 `contents` 之上、文字子视图之下。
 - 样式层为 100% 不透明填充、5pt 圆角和 1pt 描边，并按方向绘制约 5pt 的气泡尾巴。
-- 自有路径同时作为背景视图 mask，完整裁掉原生绿色外轮廓；移除样式时恢复微信原有 mask。
+- 自有覆盖层作为 `YYAsyncImageView` 子视图并自动跟随其尺寸变化；同一路径作为背景 mask，异步变为多行高度时同步更新路径和 mask。
 - 关联对象保证每个气泡最多一个样式层；方向、气泡或识别条件失效时移除自有层，不修改布局和消息数据。
 
 ## 0.1.1 修复
 
-- 样式 Hook 在 Tweak 构造阶段先尝试安装；若目标类尚未注册，则在主线程以 0.05–0.8 秒间隔进行最多 5 次有界重试，避免首批 Cell 先显示默认绿色。
+- 样式 Hook 在 Tweak 构造阶段先尝试安装；目标类晚加载时由 dyld image 回调触发安装，并在主线程以 0.25 秒间隔进行最多 40 次有界重试，避免首批 Cell 先显示默认绿色。
 - 圆角从 12pt 调整为接近原生轮廓的 5pt。
 - 普通圆角矩形改为带左右尾巴的单一闭合路径。
 - 使用相同路径裁剪原生异步背景，避免圆角和尾巴外围露出绿色。
 - 固定主题填充改为完全不透明，避免与底部原生绿色混色。
 
-## 0.1.1 真机验证步骤
+## 0.1.2 修复
 
-1. 安装 GitHub Actions 生成的原生 RootHide `0.1.1` 包，完全结束并重新打开微信。
+- 每次 `layoutContentView` 进入原实现前先清理旧 Cell 样式；同时 Hook `prepareForReuse` 做显式清理。
+- 收发方向仍由稳定头像边缘判定，但尾巴改由气泡本地左右边缘到头像的实际距离判定，避免视图变换导致左右尾巴反向。
+- 样式覆盖层改为自动跟随 `YYAsyncImageView` 尺寸变化，异步变为多行高度时同步更新路径和 mask。
+- 文字安全区域继续检查，非文字消息不进入样式器。
+
+## 0.1.2 真机验证步骤
+
+1. 安装 GitHub Actions 生成的原生 RootHide `0.1.2` 包，完全结束并重新打开微信。
 2. 先确认聊天列表和微信冷启动正常，再进入专用测试会话。
 3. 首次进入会话时确认首屏文字气泡直接呈现主题色，不应先出现默认绿色再切换。
 4. 确认接收文字为浅蓝、发送文字为浅紫，左右尾巴、5pt 圆角和描边完整，外围没有绿色残边。
@@ -60,8 +67,8 @@
 6. 覆盖图片、语音、视频、文件、位置和转账，确认均保持微信原样。
 7. 切换系统浅色/深色模式并重新进入会话，确认颜色正确且文字仍可读。
 8. 长按、复制、点击链接、进入退出会话和前后台切换，确认交互与 Cell 高度不变。
-9. 检查 `Library/Caches/WeChatBubble/diagnostics.plist`：`pluginVersion=0.1.1`、`diagnosticsFormat=4`、`versionGate.uiModificationAllowed=true`、`styling.hookInstalled=true`、`discovery.explorationHookInstalled=false`。
-10. 若出现启动异常、默认绿色闪现、绿色残边、文字被遮挡、颜色串位或非文字消息变化，立即卸载插件并保留上述诊断文件。
+9. 检查 `Library/Caches/WeChatBubble/diagnostics.plist`：`pluginVersion=0.1.2`、`diagnosticsFormat=4`、`versionGate.uiModificationAllowed=true`、`styling.hookInstalled=true`、`discovery.explorationHookInstalled=false`。
+10. 若出现启动异常、默认绿色闪现、白色闪现、绿色残边、尾巴反向、气泡裁剪、颜色串位或非文字消息变化，立即卸载插件并保留上述诊断文件。
 
 ## 测试场景
 

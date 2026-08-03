@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <dispatch/dispatch.h>
+#import <mach-o/dyld.h>
 #import "Bootstrap/WBProcessGuard.h"
 #import "Bootstrap/WBVersionGate.h"
 #import "Discovery/WBCapabilityRegistry.h"
@@ -25,7 +26,7 @@ static void WBRunBootstrap(BOOL hookInstalled) {
     }
     NSDictionary<NSString *, id> *snapshot = @{
         @"diagnosticsFormat": @4,
-        @"pluginVersion": @"0.1.1",
+        @"pluginVersion": @"0.1.2",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],
@@ -51,13 +52,20 @@ static void WBAttemptInstallAndBootstrap(NSUInteger attempt) {
         return;
     }
     BOOL hookInstalled = [WBTextBubbleStyleHook install];
-    if (hookInstalled || attempt >= 5) {
+    if (hookInstalled || attempt >= 40) {
         WBRunBootstrap(hookInstalled);
         return;
     }
-    static const NSTimeInterval delays[] = {0.05, 0.1, 0.2, 0.4, 0.8};
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[attempt] * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         WBAttemptInstallAndBootstrap(attempt + 1);
+    });
+}
+
+static void WBImageAdded(const struct mach_header *header, intptr_t slide) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([WBVersionGate allowsUIModification]) {
+            [WBTextBubbleStyleHook install];
+        }
     });
 }
 
@@ -67,6 +75,7 @@ static void WBInitialize(void) {
         if (![WBProcessGuard isWeChatMainProcess]) {
             return;
         }
+        _dyld_register_func_for_add_image(WBImageAdded);
         BOOL hookInstalled = [WBVersionGate allowsUIModification] && [WBTextBubbleStyleHook install];
         dispatch_async(dispatch_get_main_queue(), ^{
             static dispatch_once_t onceToken;
