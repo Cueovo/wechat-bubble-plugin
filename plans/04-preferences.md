@@ -105,6 +105,19 @@
 2. 将 `mapPixelWidth/mapPixelHeight` 与气泡点尺寸对比，确认约为设备 scale 倍数。
 3. 在文字气泡覆盖背景树枝、灯光边缘等高对比细节的位置观察边缘弯曲，并再次检查快速滚动性能。
 
+## 0.6.4 显式位移偏移与圆弧折射曲线
+
+- 0.6.3 真机确认 map/backdrop 均使用 3× backing scale，`inputAmount=20` 已成功读回且滤镜链只有 `displacementMap`，但背景仍无可见弯曲；`inputOffset` 因从未设置而不可读。
+- 对照 GooseHyperGlassCDN 的 WebGL 实现，将边缘强度从 smoothstep 改为 `circleMap(1 - distance / refractionHeight)`，使折射集中在玻璃边缘；该项目使用自定义 WebGL backdrop 采样而非 UIKit `CAFilter`，这里只移植其折射剖面数学。
+- 显式设置 `inputOffset=CGPointZero` 后再读回，确保私有位移滤镜完成输入初始化；缓存键升级为 `v4-circle`。
+- 格式 17 诊断新增 `inputOffsetSet` 与 `inputOffsetMatchesRequested`，并在实际安装滤镜时以同一个气泡同时记录 map/backdrop 的逻辑尺寸、像素尺寸和比值，避免全局最后生成值与最后安装值来自不同气泡。
+
+### 0.6.4 真机复测
+
+1. 确认 `inputOffsetSet=true`、`inputOffsetReadable=true`、`inputOffsetMatchesRequested=true` 且 X/Y 均为 0。
+2. 确认 `mapPixelWidth/backdropWidth` 与 `mapPixelHeight/backdropHeight` 的比值均约等于 `mapScale`。
+3. 在月面纹理等高频背景上检查气泡边缘弯曲；若仍无位移，则停止继续猜测 `CAFilter` 贴图语义，转入显式 backdrop 捕获与 Metal/Core Image 自定义采样路线。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。

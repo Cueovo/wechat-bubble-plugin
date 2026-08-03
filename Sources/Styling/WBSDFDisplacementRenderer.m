@@ -20,13 +20,19 @@ static NSArray<NSString *> *WBSDFLastInstalledFilterTypes;
 static CGFloat WBSDFLastMapScale;
 static size_t WBSDFLastMapWidth;
 static size_t WBSDFLastMapHeight;
+static CGFloat WBSDFLastMapLogicalWidth;
+static CGFloat WBSDFLastMapLogicalHeight;
+static CGFloat WBSDFLastMapToBackdropWidthRatio;
+static CGFloat WBSDFLastMapToBackdropHeightRatio;
 static CGFloat WBSDFLastBackdropScale;
 static CGFloat WBSDFLastBackdropScaleRequested;
 static CGFloat WBSDFLastBackdropContentsScale;
 static CGFloat WBSDFLastBackdropWidth;
 static CGFloat WBSDFLastBackdropHeight;
 static double WBSDFLastGenerationMilliseconds;
+static BOOL WBSDFInputOffsetSet;
 static BOOL WBSDFInputOffsetReadable;
+static BOOL WBSDFInputOffsetMatchesRequested;
 static CGFloat WBSDFInputOffsetX;
 static CGFloat WBSDFInputOffsetY;
 static double WBSDFInputAmountReadback;
@@ -103,7 +109,7 @@ static void WBSDFScheduleRuntimeSnapshot(void) {
             @"runtimeFailureCount": @(WBSDFRuntimeFailureCount),
             @"originalFilterTypes": WBSDFLastOriginalFilterTypes ?: @[],
             @"installedFilterTypes": WBSDFLastInstalledFilterTypes ?: @[],
-            @"mapEncoding": @"rg-normal-native-backing-scale",
+            @"mapEncoding": @"rg-normal-circle-profile-native-scale",
             @"mapScale": @(WBSDFLastMapScale),
             @"backdropScale": @(WBSDFLastBackdropScale),
             @"backdropScaleRequested": @(WBSDFLastBackdropScaleRequested),
@@ -113,9 +119,15 @@ static void WBSDFScheduleRuntimeSnapshot(void) {
             @"generationMilliseconds": @(WBSDFLastGenerationMilliseconds),
             @"mapPixelWidth": @(WBSDFLastMapWidth),
             @"mapPixelHeight": @(WBSDFLastMapHeight),
+            @"mapLogicalWidth": @(WBSDFLastMapLogicalWidth),
+            @"mapLogicalHeight": @(WBSDFLastMapLogicalHeight),
+            @"mapToBackdropWidthRatio": @(WBSDFLastMapToBackdropWidthRatio),
+            @"mapToBackdropHeightRatio": @(WBSDFLastMapToBackdropHeightRatio),
             @"inputAmount": @20,
             @"inputAmountReadback": @(WBSDFInputAmountReadback),
+            @"inputOffsetSet": @(WBSDFInputOffsetSet),
             @"inputOffsetReadable": @(WBSDFInputOffsetReadable),
+            @"inputOffsetMatchesRequested": @(WBSDFInputOffsetMatchesRequested),
             @"inputOffsetX": @(WBSDFInputOffsetX),
             @"inputOffsetY": @(WBSDFInputOffsetY),
             @"updatedAt": NSDate.date
@@ -365,8 +377,8 @@ static UIImage *WBSDFCreateDisplacementImage(UIBezierPath *path, CGRect bounds, 
             float length = sqrtf(dx * dx + dy * dy);
             float normalX = length > 0.0001f ? dx / length : 0.0f;
             float normalY = length > 0.0001f ? dy / length : 0.0f;
-            float edge = mask[paddedIndex] >= 128 ? fmaxf(0.0f, fminf(1.0f, 1.0f - distanceToOutside[paddedIndex] / edgeWidth)) : 0.0f;
-            edge = edge * edge * (3.0f - 2.0f * edge);
+            float normalizedDepth = mask[paddedIndex] >= 128 ? fmaxf(0.0f, fminf(1.0f, 1.0f - distanceToOutside[paddedIndex] / edgeWidth)) : 0.0f;
+            float edge = 1.0f - sqrtf(fmaxf(0.0f, 1.0f - normalizedDepth * normalizedDepth));
             pixels[outputIndex * 4] = (uint8_t)lrintf(fmaxf(0.0f, fminf(255.0f, 127.5f + normalX * edge * 127.5f)));
             pixels[outputIndex * 4 + 1] = (uint8_t)lrintf(fmaxf(0.0f, fminf(255.0f, 127.5f + normalY * edge * 127.5f)));
             pixels[outputIndex * 4 + 2] = 128;
@@ -453,7 +465,7 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             @"runtimeFailureCount": @(WBSDFRuntimeFailureCount),
             @"originalFilterTypes": WBSDFLastOriginalFilterTypes ?: @[],
             @"installedFilterTypes": WBSDFLastInstalledFilterTypes ?: @[],
-            @"mapEncoding": @"rg-normal-native-backing-scale",
+            @"mapEncoding": @"rg-normal-circle-profile-native-scale",
             @"mapScale": @(WBSDFLastMapScale),
             @"backdropScale": @(WBSDFLastBackdropScale),
             @"backdropScaleRequested": @(WBSDFLastBackdropScaleRequested),
@@ -463,9 +475,15 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             @"generationMilliseconds": @(WBSDFLastGenerationMilliseconds),
             @"mapPixelWidth": @(WBSDFLastMapWidth),
             @"mapPixelHeight": @(WBSDFLastMapHeight),
+            @"mapLogicalWidth": @(WBSDFLastMapLogicalWidth),
+            @"mapLogicalHeight": @(WBSDFLastMapLogicalHeight),
+            @"mapToBackdropWidthRatio": @(WBSDFLastMapToBackdropWidthRatio),
+            @"mapToBackdropHeightRatio": @(WBSDFLastMapToBackdropHeightRatio),
             @"inputAmount": @20,
             @"inputAmountReadback": @(WBSDFInputAmountReadback),
+            @"inputOffsetSet": @(WBSDFInputOffsetSet),
             @"inputOffsetReadable": @(WBSDFInputOffsetReadable),
+            @"inputOffsetMatchesRequested": @(WBSDFInputOffsetMatchesRequested),
             @"inputOffsetX": @(WBSDFInputOffsetX),
             @"inputOffsetY": @(WBSDFInputOffsetY)
         };
@@ -475,7 +493,7 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
 - (NSString *)imageCacheKeyForBaseKey:(NSString *)baseKey bounds:(CGRect)bounds {
     size_t width = (size_t)MAX(2.0, ceil(CGRectGetWidth(bounds)));
     size_t height = (size_t)MAX(2.0, ceil(CGRectGetHeight(bounds)));
-    return [NSString stringWithFormat:@"v3-native-%@-%zux%zu-%.2f", baseKey, width, height, UIScreen.mainScreen.scale];
+    return [NSString stringWithFormat:@"v4-circle-%@-%zux%zu-%.2f", baseKey, width, height, UIScreen.mainScreen.scale];
 }
 
 - (WBSDFApplicationResult)scheduleImageForPath:(UIBezierPath *)path bounds:(CGRect)bounds cacheKey:(NSString *)cacheKey effectView:(UIVisualEffectView *)effectView {
@@ -551,9 +569,16 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         return WBSDFApplicationResultPending;
     }
     @synchronized(WBSDFDisplacementRenderer.class) {
+        WBSDFLastMapScale = image.scale;
+        WBSDFLastMapWidth = CGImageGetWidth(image.CGImage);
+        WBSDFLastMapHeight = CGImageGetHeight(image.CGImage);
+        WBSDFLastMapLogicalWidth = image.size.width;
+        WBSDFLastMapLogicalHeight = image.size.height;
         WBSDFLastBackdropContentsScale = backdropLayer.contentsScale;
         WBSDFLastBackdropWidth = CGRectGetWidth(backdropLayer.bounds);
         WBSDFLastBackdropHeight = CGRectGetHeight(backdropLayer.bounds);
+        WBSDFLastMapToBackdropWidthRatio = WBSDFLastBackdropWidth > 0.0 ? (CGFloat)WBSDFLastMapWidth / WBSDFLastBackdropWidth : 0.0;
+        WBSDFLastMapToBackdropHeightRatio = WBSDFLastBackdropHeight > 0.0 ? (CGFloat)WBSDFLastMapHeight / WBSDFLastBackdropHeight : 0.0;
     }
     self.backdropRetryScheduled = NO;
     if (self.backdropLayer && self.backdropLayer != backdropLayer) {
@@ -572,6 +597,9 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             WBSDFRecordRuntimeFailure(@"displacement-filter-creation-failed", YES);
             return WBSDFApplicationResultFailed;
         }
+        applicationStep = @"set-input-offset";
+        [displacement setValue:[NSValue valueWithCGPoint:CGPointZero] forKey:@"inputOffset"];
+        BOOL inputOffsetSet = YES;
         BOOL inputOffsetReadable = NO;
         CGPoint inputOffset = CGPointZero;
         @try {
@@ -582,6 +610,7 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             }
         } @catch (__unused NSException *exception) {
         }
+        BOOL inputOffsetMatchesRequested = inputOffsetReadable && fabs(inputOffset.x) < 0.001 && fabs(inputOffset.y) < 0.001;
         applicationStep = @"set-input-mask-image";
         [displacement setValue:(__bridge id)image.CGImage forKey:@"inputMaskImage"];
         applicationStep = @"set-input-amount";
@@ -595,7 +624,9 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         } @catch (__unused NSException *exception) {
         }
         @synchronized(WBSDFDisplacementRenderer.class) {
+            WBSDFInputOffsetSet = inputOffsetSet;
             WBSDFInputOffsetReadable = inputOffsetReadable;
+            WBSDFInputOffsetMatchesRequested = inputOffsetMatchesRequested;
             WBSDFInputOffsetX = inputOffset.x;
             WBSDFInputOffsetY = inputOffset.y;
             WBSDFInputAmountReadback = inputAmountReadback;
