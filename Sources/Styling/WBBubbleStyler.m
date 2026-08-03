@@ -47,8 +47,63 @@ static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide, WBBu
     return path;
 }
 
+static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide, WBBubbleSegmentPosition segmentPosition) {
+    if (segmentPosition == WBBubbleSegmentPositionSingle) {
+        return WBBubblePath(bounds, tailSide, segmentPosition);
+    }
+    CGFloat minX = CGRectGetMinX(bounds);
+    CGFloat minY = CGRectGetMinY(bounds);
+    CGFloat maxX = CGRectGetMaxX(bounds);
+    CGFloat maxY = CGRectGetMaxY(bounds);
+    CGFloat width = CGRectGetWidth(bounds);
+    CGFloat height = CGRectGetHeight(bounds);
+    CGFloat tailWidth = MIN(5.0, width * 0.12);
+    CGFloat radius = MIN([WBBubbleThemeProvider cornerRadius], MIN((width - tailWidth) * 0.5, height * 0.5));
+    CGFloat bodyMinX = tailSide == WBBubbleTailSideLeft ? minX + tailWidth : minX;
+    CGFloat bodyMaxX = tailSide == WBBubbleTailSideRight ? maxX - tailWidth : maxX;
+    UIBezierPath *path = [UIBezierPath bezierPath];
+    if (segmentPosition == WBBubbleSegmentPositionMiddle) {
+        [path moveToPoint:CGPointMake(bodyMinX, minY)];
+        [path addLineToPoint:CGPointMake(bodyMinX, maxY)];
+        [path moveToPoint:CGPointMake(bodyMaxX, minY)];
+        [path addLineToPoint:CGPointMake(bodyMaxX, maxY)];
+        return path;
+    }
+    if (segmentPosition == WBBubbleSegmentPositionBottom) {
+        [path moveToPoint:CGPointMake(bodyMinX, minY)];
+        [path addLineToPoint:CGPointMake(bodyMinX, maxY - radius)];
+        [path addQuadCurveToPoint:CGPointMake(bodyMinX + radius, maxY) controlPoint:CGPointMake(bodyMinX, maxY)];
+        [path addLineToPoint:CGPointMake(bodyMaxX - radius, maxY)];
+        [path addQuadCurveToPoint:CGPointMake(bodyMaxX, maxY - radius) controlPoint:CGPointMake(bodyMaxX, maxY)];
+        [path addLineToPoint:CGPointMake(bodyMaxX, minY)];
+        return path;
+    }
+    CGFloat tailSpan = MIN(10.0, MAX(0.0, height - radius - 2.0));
+    CGFloat tailCenter = MIN(MAX(minY + MIN(13.0, height * 0.35), minY + radius + tailSpan * 0.5), maxY - tailSpan * 0.5);
+    CGFloat tailTop = tailCenter - tailSpan * 0.5;
+    CGFloat tailBottom = tailCenter + tailSpan * 0.5;
+    [path moveToPoint:CGPointMake(bodyMinX, maxY)];
+    if (tailSide == WBBubbleTailSideLeft && tailSpan > 0.0) {
+        [path addLineToPoint:CGPointMake(bodyMinX, tailBottom)];
+        [path addLineToPoint:CGPointMake(minX, tailCenter)];
+        [path addLineToPoint:CGPointMake(bodyMinX, tailTop)];
+    }
+    [path addLineToPoint:CGPointMake(bodyMinX, minY + radius)];
+    [path addQuadCurveToPoint:CGPointMake(bodyMinX + radius, minY) controlPoint:CGPointMake(bodyMinX, minY)];
+    [path addLineToPoint:CGPointMake(bodyMaxX - radius, minY)];
+    [path addQuadCurveToPoint:CGPointMake(bodyMaxX, minY + radius) controlPoint:CGPointMake(bodyMaxX, minY)];
+    if (tailSide == WBBubbleTailSideRight && tailSpan > 0.0) {
+        [path addLineToPoint:CGPointMake(bodyMaxX, tailTop)];
+        [path addLineToPoint:CGPointMake(maxX, tailCenter)];
+        [path addLineToPoint:CGPointMake(bodyMaxX, tailBottom)];
+    }
+    [path addLineToPoint:CGPointMake(bodyMaxX, maxY)];
+    return path;
+}
+
 @interface WBBubbleOverlayView : UIView
 @property (nonatomic, strong) CAShapeLayer *shapeLayer;
+@property (nonatomic, strong) CAShapeLayer *borderLayer;
 @property (nonatomic, strong) CAShapeLayer *maskLayer;
 @property (nonatomic, assign) WBBubbleDirection direction;
 @property (nonatomic, assign) WBBubbleTailSide tailSide;
@@ -67,6 +122,12 @@ static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide, WBBu
         _shapeLayer.name = @"com.bi8bo.wechat.bubble.style";
         _shapeLayer.contentsScale = UIScreen.mainScreen.scale;
         [self.layer addSublayer:_shapeLayer];
+        _borderLayer = [CAShapeLayer layer];
+        _borderLayer.contentsScale = UIScreen.mainScreen.scale;
+        _borderLayer.fillColor = UIColor.clearColor.CGColor;
+        _borderLayer.lineJoin = kCALineJoinRound;
+        _borderLayer.lineCap = kCALineCapButt;
+        [self.layer addSublayer:_borderLayer];
         _maskLayer = [CAShapeLayer layer];
         _maskLayer.contentsScale = UIScreen.mainScreen.scale;
         _maskLayer.fillColor = UIColor.blackColor.CGColor;
@@ -78,14 +139,18 @@ static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide, WBBu
     [super layoutSubviews];
     CGRect localBounds = (CGRect){CGPointZero, self.bounds.size};
     UIBezierPath *path = WBBubblePath(localBounds, self.tailSide, self.segmentPosition);
+    UIBezierPath *borderPath = WBBubbleBorderPath(localBounds, self.tailSide, self.segmentPosition);
     UITraitCollection *traits = self.traitCollection;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     self.shapeLayer.frame = localBounds;
     self.shapeLayer.path = path.CGPath;
     self.shapeLayer.fillColor = [WBBubbleThemeProvider fillColorForDirection:self.direction traitCollection:traits].CGColor;
-    self.shapeLayer.strokeColor = self.segmentPosition == WBBubbleSegmentPositionSingle ? [WBBubbleThemeProvider borderColorForDirection:self.direction traitCollection:traits].CGColor : UIColor.clearColor.CGColor;
-    self.shapeLayer.lineWidth = [WBBubbleThemeProvider borderWidth];
+    self.shapeLayer.strokeColor = UIColor.clearColor.CGColor;
+    self.borderLayer.frame = localBounds;
+    self.borderLayer.path = borderPath.CGPath;
+    self.borderLayer.strokeColor = [WBBubbleThemeProvider borderColorForDirection:self.direction traitCollection:traits].CGColor;
+    self.borderLayer.lineWidth = [WBBubbleThemeProvider borderWidth];
     self.maskLayer.frame = localBounds;
     self.maskLayer.path = path.CGPath;
     [CATransaction commit];
