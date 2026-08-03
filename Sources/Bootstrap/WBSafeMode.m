@@ -78,7 +78,7 @@ static BOOL WBSafeModeActive;
         return @{
             @"active": @(WBSafeModeActive),
             @"currentLaunchActive": @(WBSafeModeActive),
-            @"nextLaunchRecoveryPrepared": @(WBSafeModeActive && !launchPending),
+            @"nextLaunchRecoveryPrepared": @((BOOL)(WBSafeModeActive && !launchPending)),
             @"launchPending": @(launchPending),
             @"incompleteLaunchCount": @([defaults integerForKey:WBIncompleteLaunchCountKey]),
             @"incompleteLaunchThreshold": @(WBIncompleteLaunchThreshold),

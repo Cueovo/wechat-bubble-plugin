@@ -1,5 +1,6 @@
 #import "WBBubbleSettingsViewController.h"
 #import "WBBubblePreferences.h"
+#import "WBBubbleThemeProvider.h"
 #import "../Bootstrap/WBSafeMode.h"
 #import <math.h>
 #import <objc/message.h>
@@ -37,7 +38,7 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
-        case 0: return 1;
+        case 0: return 2;
         case 1:
         case 2: return 4;
         case 3: return 3;
@@ -123,6 +124,14 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == 0) {
+        if (indexPath.row == 1) {
+            BOOL glass = [WBBubblePreferences material] == WBBubbleMaterialGlass;
+            NSString *detail = glass ? ([WBBubbleThemeProvider nativeLiquidGlassAvailable] ? @"Liquid Glass（原生）" : @"Liquid Glass（兼容）") : @"纯色";
+            UITableViewCell *cell = [self baseCellWithTitle:@"气泡材质" detail:detail];
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            return cell;
+        }
         UITableViewCell *cell = [self baseCellWithTitle:@"启用自定义气泡" detail:nil];
         UISwitch *toggle = [[UISwitch alloc] init];
         toggle.on = [WBBubblePreferences isEnabled];
@@ -168,6 +177,21 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 0 && indexPath.row == 1) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"气泡材质" message:@"iOS 26 使用 Apple 原生 Liquid Glass；较早系统使用兼容玻璃效果。" preferredStyle:UIAlertControllerStyleAlert];
+        __weak typeof(self) weakSelf = self;
+        [alert addAction:[UIAlertAction actionWithTitle:@"纯色" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [WBBubblePreferences setMaterial:WBBubbleMaterialSolid];
+            [weakSelf.tableView reloadData];
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Liquid Glass" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+            [WBBubblePreferences setMaterial:WBBubbleMaterialGlass];
+            [weakSelf.tableView reloadData];
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
     if (indexPath.section == 1 || indexPath.section == 2) {
         self.colorTarget = [self colorTargetForIndexPath:indexPath];
         UIColorPickerViewController *picker = [[UIColorPickerViewController alloc] init];

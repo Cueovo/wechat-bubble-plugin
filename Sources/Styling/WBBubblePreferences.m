@@ -5,6 +5,7 @@
 NSString * const WBBubblePreferencesDidChangeNotification = @"com.wechatbubble.preferences.changed";
 
 static NSString * const WBEnabledKey = @"com.wechatbubble.enabled";
+static NSString * const WBMaterialKey = @"com.wechatbubble.material";
 static NSString * const WBLightOutgoingFillKey = @"com.wechatbubble.light.outgoing.fill";
 static NSString * const WBLightIncomingFillKey = @"com.wechatbubble.light.incoming.fill";
 static NSString * const WBDarkOutgoingFillKey = @"com.wechatbubble.dark.outgoing.fill";
@@ -19,7 +20,7 @@ static NSString * const WBOpacityKey = @"com.wechatbubble.opacity";
 static NSString * const WBSchemaVersionKey = @"com.wechatbubble.schemaVersion";
 static NSString * const WBLegacyOutgoingColorKey = @"com.wechatbubble.outgoingColor";
 static NSString * const WBLegacyIncomingColorKey = @"com.wechatbubble.incomingColor";
-static NSInteger const WBSchemaVersion = 2;
+static NSInteger const WBSchemaVersion = 3;
 
 @implementation WBBubblePreferences
 
@@ -30,6 +31,7 @@ static NSInteger const WBSchemaVersion = 2;
 + (NSDictionary<NSString *, id> *)defaultValues {
     return @{
         WBEnabledKey: @YES,
+        WBMaterialKey: @(WBBubbleMaterialSolid),
         WBLightOutgoingFillKey: @"DCC8FF",
         WBLightIncomingFillKey: @"E8F0FF",
         WBDarkOutgoingFillKey: @"4C3E70",
@@ -96,6 +98,10 @@ static NSInteger const WBSchemaVersion = 2;
     } else if (enabled) {
         [defaults removeObjectForKey:WBEnabledKey];
     }
+    id material = [defaults objectForKey:WBMaterialKey];
+    if (material && (![material isKindOfClass:NSNumber.class] || ([material integerValue] != WBBubbleMaterialSolid && [material integerValue] != WBBubbleMaterialGlass))) {
+        [defaults removeObjectForKey:WBMaterialKey];
+    }
     NSDictionary<NSString *, NSArray<NSNumber *> *> *ranges = @{
         WBCornerRadiusKey: @[@4.0, @24.0],
         WBBorderWidthKey: @[@0.0, @3.0],
@@ -126,9 +132,8 @@ static NSInteger const WBSchemaVersion = 2;
     double schemaValue = [storedSchema isKindOfClass:NSNumber.class] ? [storedSchema doubleValue] : NAN;
     BOOL schemaValid = !schemaMissing && isfinite(schemaValue) && floor(schemaValue) == schemaValue;
     NSInteger schema = schemaValid ? (NSInteger)schemaValue : 0;
-    if (!schemaMissing && !schemaValid) {
-        [self removeStoredValues];
-    } else if (schema == 1) {
+    BOOL legacyValuesExist = [defaults objectForKey:WBLegacyOutgoingColorKey] != nil || [defaults objectForKey:WBLegacyIncomingColorKey] != nil;
+    if (schema == 1 || (schemaMissing && legacyValuesExist)) {
         NSDictionary<NSString *, id> *fallbacks = [self defaultValues];
         NSString *outgoing = [self normalizedHex:[defaults objectForKey:WBLegacyOutgoingColorKey] fallback:fallbacks[WBLightOutgoingFillKey]];
         NSString *incoming = [self normalizedHex:[defaults objectForKey:WBLegacyIncomingColorKey] fallback:fallbacks[WBLightIncomingFillKey]];
@@ -136,8 +141,11 @@ static NSInteger const WBSchemaVersion = 2;
         [defaults setObject:incoming forKey:WBLightIncomingFillKey];
         [defaults removeObjectForKey:WBLegacyOutgoingColorKey];
         [defaults removeObjectForKey:WBLegacyIncomingColorKey];
-    } else if (!schemaMissing && schema != WBSchemaVersion) {
-        [self removeStoredValues];
+    } else if (schema == 2) {
+        [defaults removeObjectForKey:WBMaterialKey];
+    }
+    if (!schemaMissing && !schemaValid) {
+        [defaults removeObjectForKey:WBSchemaVersionKey];
     }
     [self normalizeStoredValues];
     [defaults setInteger:WBSchemaVersion forKey:WBSchemaVersionKey];
@@ -207,6 +215,15 @@ static NSInteger const WBSchemaVersion = 2;
     return [value isKindOfClass:NSNumber.class] ? [value boolValue] : YES;
 }
 
++ (WBBubbleMaterial)material {
+    id value = [[self defaults] objectForKey:WBMaterialKey];
+    return [value isKindOfClass:NSNumber.class] && [value integerValue] == WBBubbleMaterialGlass ? WBBubbleMaterialGlass : WBBubbleMaterialSolid;
+}
+
++ (NSString *)materialIdentifier {
+    return [self material] == WBBubbleMaterialGlass ? @"glass" : @"solid";
+}
+
 + (UIColor *)fillColorForOutgoing:(BOOL)outgoing dark:(BOOL)dark {
     return [self colorForHex:[self fillColorHexForOutgoing:outgoing dark:dark] alpha:[self opacity]];
 }
@@ -237,6 +254,10 @@ static NSInteger const WBSchemaVersion = 2;
 
 + (void)setEnabled:(BOOL)enabled {
     [self setObject:@(enabled) forKey:WBEnabledKey];
+}
+
++ (void)setMaterial:(WBBubbleMaterial)material {
+    [self setObject:@(material == WBBubbleMaterialGlass ? WBBubbleMaterialGlass : WBBubbleMaterialSolid) forKey:WBMaterialKey];
 }
 
 + (void)setFillColor:(UIColor *)color outgoing:(BOOL)outgoing dark:(BOOL)dark {
@@ -275,6 +296,7 @@ static NSInteger const WBSchemaVersion = 2;
     return @{
         @"schemaVersion": @(WBSchemaVersion),
         @"enabled": @([self isEnabled]),
+        @"material": [self materialIdentifier],
         @"light": @{
             @"outgoingFill": [self fillColorHexForOutgoing:YES dark:NO],
             @"incomingFill": [self fillColorHexForOutgoing:NO dark:NO],

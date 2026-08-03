@@ -22,6 +22,20 @@
 - 恢复微信默认样式。
 - 版本、能力状态和安全模式入口占位。
 
+## 0.5.0 材质扩展
+
+- 设置页新增“气泡材质”，可在“纯色”和“Liquid Glass”之间切换，默认保持纯色以避免升级后外观突变。
+- 偏好 schema 升级到 3；schema 2 的颜色和外观参数原样保留，仅补充默认材质。
+- iOS 26 运行时能力完整时动态创建真正的 `UIGlassEffect`；旧 SDK 不产生静态符号依赖。iOS 15–25 使用 `UIBlurEffectStyleSystemUltraThinMaterial` 和 tint 的兼容玻璃后端，设置页明确显示“兼容”。
+- 两种玻璃后端共用现有气泡路径、方向色、深浅色、透明度、描边和 Cell 复用清理。诊断记录 requested material、resolved backend 和原生 API 可用性。
+
+### 0.5.0 双平台测试
+
+1. 当前 RootHide 设备选择 Liquid Glass，确认设置显示“Liquid Glass（兼容）”，发送/接收气泡均有模糊和 tint，滚动复用无残留；切回纯色后立即恢复现有渲染。
+2. iOS 26 设备选择 Liquid Glass，确认设置显示“Liquid Glass（原生）”，诊断为 `native-uiglass-effect`，并目视确认系统折射、高光和背景适应。
+3. 两个平台分别测试浅色/深色、长消息多段、快速滚动、前后台切换、降低透明度和降低动态效果。
+4. iOS 26 原生路径未完成真机验证前，不将“原生 Liquid Glass”标记为发布验收通过。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。

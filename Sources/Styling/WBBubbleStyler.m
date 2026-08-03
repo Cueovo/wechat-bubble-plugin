@@ -1,5 +1,6 @@
 #import "WBBubbleStyler.h"
 #import <QuartzCore/QuartzCore.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 
 static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide, WBBubbleSegmentPosition segmentPosition) {
@@ -102,9 +103,13 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
 }
 
 @interface WBBubbleOverlayView : UIView
+@property (nonatomic, strong) UIVisualEffectView *effectView;
+@property (nonatomic, strong) UIView *tintView;
+@property (nonatomic, strong) UIView *borderView;
 @property (nonatomic, strong) CAShapeLayer *shapeLayer;
 @property (nonatomic, strong) CAShapeLayer *borderLayer;
 @property (nonatomic, strong) CAShapeLayer *maskLayer;
+@property (nonatomic, copy, nullable) NSString *effectSignature;
 @property (nonatomic, assign) WBBubbleDirection direction;
 @property (nonatomic, assign) WBBubbleTailSide tailSide;
 @property (nonatomic, assign) WBBubbleSegmentPosition segmentPosition;
@@ -118,21 +123,63 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         self.userInteractionEnabled = NO;
         self.backgroundColor = UIColor.clearColor;
         self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _effectView = [[UIVisualEffectView alloc] initWithEffect:nil];
+        _effectView.userInteractionEnabled = NO;
+        _effectView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self addSubview:_effectView];
+        _tintView = [[UIView alloc] initWithFrame:_effectView.contentView.bounds];
+        _tintView.userInteractionEnabled = NO;
+        _tintView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_effectView.contentView addSubview:_tintView];
         _shapeLayer = [CAShapeLayer layer];
         _shapeLayer.name = @"com.bi8bo.wechat.bubble.style";
         _shapeLayer.contentsScale = UIScreen.mainScreen.scale;
         [self.layer addSublayer:_shapeLayer];
+        _borderView = [[UIView alloc] initWithFrame:self.bounds];
+        _borderView.userInteractionEnabled = NO;
+        _borderView.backgroundColor = UIColor.clearColor;
+        _borderView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self addSubview:_borderView];
         _borderLayer = [CAShapeLayer layer];
         [_borderLayer setContentsScale:UIScreen.mainScreen.scale];
         [_borderLayer setFillColor:UIColor.clearColor.CGColor];
         [_borderLayer setLineJoin:kCALineJoinRound];
         [_borderLayer setLineCap:kCALineCapButt];
-        [self.layer addSublayer:_borderLayer];
+        [_borderView.layer addSublayer:_borderLayer];
         _maskLayer = [CAShapeLayer layer];
         [_maskLayer setContentsScale:UIScreen.mainScreen.scale];
         _maskLayer.fillColor = UIColor.blackColor.CGColor;
     }
     return self;
+}
+
+- (void)updateGlassEffectForColor:(UIColor *)color dark:(BOOL)dark {
+    NSString *backend = [WBBubbleThemeProvider resolvedMaterialBackend];
+    NSString *signature = [NSString stringWithFormat:@"%@-%ld-%d-%@", backend, (long)self.direction, dark, color.description];
+    if ([self.effectSignature isEqualToString:signature]) {
+        return;
+    }
+    self.effectSignature = signature;
+    CGFloat sourceAlpha = CGColorGetAlpha(color.CGColor);
+    if ([backend isEqualToString:@"native-uiglass-effect"]) {
+        id effect = [[NSClassFromString(@"UIGlassEffect") alloc] init];
+        SEL tintSelector = NSSelectorFromString(@"setTintColor:");
+        SEL interactiveSelector = NSSelectorFromString(@"setInteractive:");
+        if ([effect respondsToSelector:tintSelector]) {
+            ((void (*)(id, SEL, id))objc_msgSend)(effect, tintSelector, [color colorWithAlphaComponent:0.12 + sourceAlpha * 0.33]);
+        }
+        if ([effect respondsToSelector:interactiveSelector]) {
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(effect, interactiveSelector, NO);
+        }
+        if ([effect isKindOfClass:UIVisualEffect.class]) {
+            self.effectView.effect = (UIVisualEffect *)effect;
+            self.tintView.hidden = YES;
+            return;
+        }
+    }
+    self.effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    self.tintView.hidden = NO;
+    self.tintView.backgroundColor = [color colorWithAlphaComponent:0.10 + sourceAlpha * 0.18];
 }
 
 - (void)layoutSubviews {
@@ -141,12 +188,23 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
     UIBezierPath *path = WBBubblePath(localBounds, self.tailSide, self.segmentPosition);
     UIBezierPath *borderPath = WBBubbleBorderPath(localBounds, self.tailSide, self.segmentPosition);
     UITraitCollection *traits = self.traitCollection;
+    UIColor *fillColor = [WBBubbleThemeProvider fillColorForDirection:self.direction traitCollection:traits];
+    BOOL usesGlass = [WBBubbleThemeProvider usesGlassMaterial];
+    self.effectView.frame = localBounds;
+    self.effectView.hidden = !usesGlass;
+    if (usesGlass) {
+        [self updateGlassEffectForColor:fillColor dark:traits.userInterfaceStyle == UIUserInterfaceStyleDark];
+    } else {
+        self.effectView.effect = nil;
+        self.effectSignature = nil;
+    }
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     self.shapeLayer.frame = localBounds;
     self.shapeLayer.path = path.CGPath;
-    self.shapeLayer.fillColor = [WBBubbleThemeProvider fillColorForDirection:self.direction traitCollection:traits].CGColor;
+    self.shapeLayer.fillColor = usesGlass ? UIColor.clearColor.CGColor : fillColor.CGColor;
     self.shapeLayer.strokeColor = UIColor.clearColor.CGColor;
+    self.borderView.frame = localBounds;
     self.borderLayer.frame = localBounds;
     self.borderLayer.path = borderPath.CGPath;
     self.borderLayer.strokeColor = [WBBubbleThemeProvider borderColorForDirection:self.direction traitCollection:traits].CGColor;
@@ -169,6 +227,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
 @interface WBBubbleStyleState : NSObject
 @property (nonatomic, strong) WBBubbleOverlayView *overlayView;
 @property (nonatomic, strong, nullable) CALayer *originalMask;
+@property (nonatomic, strong, nullable) UIImage *originalImage;
 @property (nonatomic, copy) NSString *themeIdentifier;
 @end
 
@@ -192,6 +251,16 @@ static char WBBubbleStyleStateKey;
         objc_setAssociatedObject(bubbleView, &WBBubbleStyleStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     WBBubbleOverlayView *overlayView = state.overlayView;
+    if ([bubbleView isKindOfClass:UIImageView.class]) {
+        UIImageView *imageView = (UIImageView *)bubbleView;
+        if ([WBBubbleThemeProvider usesGlassMaterial] && imageView.image) {
+            state.originalImage = imageView.image;
+            imageView.image = nil;
+        } else if (![WBBubbleThemeProvider usesGlassMaterial] && !imageView.image && state.originalImage) {
+            imageView.image = state.originalImage;
+            state.originalImage = nil;
+        }
+    }
     if (overlayView.superview != bubbleView) {
         [overlayView removeFromSuperview];
         [bubbleView insertSubview:overlayView atIndex:0];
@@ -225,6 +294,9 @@ static char WBBubbleStyleStateKey;
     }
     [CATransaction commit];
     [state.overlayView removeFromSuperview];
+    if ([bubbleView isKindOfClass:UIImageView.class] && state.originalImage && !((UIImageView *)bubbleView).image) {
+        ((UIImageView *)bubbleView).image = state.originalImage;
+    }
     objc_setAssociatedObject(bubbleView, &WBBubbleStyleStateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 

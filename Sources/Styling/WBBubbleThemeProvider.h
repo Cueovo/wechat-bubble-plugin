@@ -12,6 +12,10 @@ typedef NS_ENUM(NSInteger, WBBubbleDirection) {
 @interface WBBubbleThemeProvider : NSObject
 
 + (BOOL)isEnabled;
++ (BOOL)usesGlassMaterial;
++ (BOOL)nativeLiquidGlassAvailable;
++ (NSString *)materialIdentifier;
++ (NSString *)resolvedMaterialBackend;
 + (NSString *)themeIdentifier;
 + (UIColor *)fillColorForDirection:(WBBubbleDirection)direction traitCollection:(UITraitCollection *)traitCollection;
 + (UIColor *)borderColorForDirection:(WBBubbleDirection)direction traitCollection:(UITraitCollection *)traitCollection;

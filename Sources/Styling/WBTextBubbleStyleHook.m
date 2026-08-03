@@ -364,8 +364,11 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
 + (NSDictionary<NSString *, id> *)configurationSnapshot {
     Class cellClass = NSClassFromString(@"CommonMessageCellView");
     return @{
-        @"mode": @"user-configurable-solid-colors",
+        @"mode": @"user-configurable-material",
         @"themeIdentifier": [WBBubbleThemeProvider themeIdentifier],
+        @"requestedMaterial": [WBBubbleThemeProvider materialIdentifier],
+        @"resolvedMaterialBackend": [WBBubbleThemeProvider resolvedMaterialBackend],
+        @"nativeLiquidGlassAvailable": @([WBBubbleThemeProvider nativeLiquidGlassAvailable]),
         @"enabled": @([WBBubbleThemeProvider isEnabled]),
         @"hookInstalled": @(WBHookInstalled),
         @"targetClassAvailable": @(cellClass != Nil),

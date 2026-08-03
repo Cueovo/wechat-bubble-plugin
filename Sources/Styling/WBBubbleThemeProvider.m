@@ -7,8 +7,28 @@
     return [WBBubblePreferences isEnabled];
 }
 
++ (BOOL)usesGlassMaterial {
+    return [WBBubblePreferences material] == WBBubbleMaterialGlass;
+}
+
++ (BOOL)nativeLiquidGlassAvailable {
+    Class glassEffectClass = NSClassFromString(@"UIGlassEffect");
+    return glassEffectClass && [glassEffectClass isSubclassOfClass:UIVisualEffect.class] && [glassEffectClass instancesRespondToSelector:NSSelectorFromString(@"init")] && [glassEffectClass instancesRespondToSelector:NSSelectorFromString(@"setTintColor:")] && [glassEffectClass instancesRespondToSelector:NSSelectorFromString(@"setInteractive:")];
+}
+
++ (NSString *)materialIdentifier {
+    return [WBBubblePreferences materialIdentifier];
+}
+
++ (NSString *)resolvedMaterialBackend {
+    if (![self usesGlassMaterial]) {
+        return @"solid";
+    }
+    return [self nativeLiquidGlassAvailable] ? @"native-uiglass-effect" : @"compatibility-blur";
+}
+
 + (NSString *)themeIdentifier {
-    return @"stage04-preferences-v1";
+    return [NSString stringWithFormat:@"stage05-material-v1-%@", [self resolvedMaterialBackend]];
 }
 
 + (UIColor *)fillColorForDirection:(WBBubbleDirection)direction traitCollection:(UITraitCollection *)traitCollection {
