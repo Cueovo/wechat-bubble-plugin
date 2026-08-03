@@ -5,9 +5,9 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <substrate.h>
-#import <math.h>
 
 static void (*WBOriginalLayoutContentView)(id, SEL);
+static void (*WBOriginalLayoutSubviews)(id, SEL);
 static void (*WBOriginalPrepareForReuse)(id, SEL);
 static BOOL WBHookInstalled;
 static char WBLastStyledBubbleKey;
@@ -18,28 +18,60 @@ static UIView *WBViewFromSelector(id object, NSString *selectorName) {
     return [value isKindOfClass:UIView.class] ? value : nil;
 }
 
-static UIView *WBAvatarView(id object, UIView *cellView) {
-    UIView *avatarView = WBViewFromSelector(object, @"getHeadImageView");
-    if (avatarView) {
-        return avatarView;
+static UIView *WBDescendantOfClass(UIView *rootView, Class targetClass) {
+    if (!rootView || !targetClass) {
+        return nil;
     }
-    for (UIView *subview in cellView.subviews) {
-        if ([NSStringFromClass(subview.class) isEqualToString:@"MMHeadImageView"]) {
+    for (UIView *subview in rootView.subviews) {
+        if ([subview isKindOfClass:targetClass]) {
             return subview;
+        }
+        UIView *match = WBDescendantOfClass(subview, targetClass);
+        if (match) {
+            return match;
         }
     }
     return nil;
 }
 
-static WBBubbleDirection WBDirectionForAvatarView(UIView *avatarView, UIView *cellView) {
+static id WBValueFromSelector(id object, NSString *selectorName) {
+    SEL selector = NSSelectorFromString(selectorName);
+    return [object respondsToSelector:selector] ? ((id (*)(id, SEL))objc_msgSend)(object, selector) : nil;
+}
+
+static UIView *WBAvatarView(id object, UIView *cellView) {
+    UIView *avatarView = WBViewFromSelector(object, @"getHeadImageView");
+    if (avatarView) {
+        return avatarView;
+    }
+    Class avatarClass = NSClassFromString(@"MMHeadImageView");
+    return WBDescendantOfClass(cellView, avatarClass);
+}
+
+static UIView *WBTextViewForCell(id object, UIView *cellView) {
+    UIView *textView = WBViewFromSelector(object, @"getRichTextView");
+    if (textView) {
+        return textView;
+    }
+    return WBDescendantOfClass(cellView, NSClassFromString(@"RichTextView"));
+}
+
+static WBBubbleDirection WBDirectionForMessage(id object, UIView *avatarView, UIView *cellView) {
+    id messageWrap = WBValueFromSelector(object, @"getCurrentMessageWrap");
+    if (!messageWrap) {
+        messageWrap = WBValueFromSelector(object, @"messageWrap");
+    }
+    Class messageClass = NSClassFromString(@"CMessageWrap");
+    SEL senderSelector = NSSelectorFromString(@"isSenderFromMsgWrap:");
+    if (messageWrap && messageClass && [messageClass respondsToSelector:senderSelector]) {
+        BOOL isSender = ((BOOL (*)(id, SEL, id))objc_msgSend)(messageClass, senderSelector, messageWrap);
+        return isSender ? WBBubbleDirectionOutgoing : WBBubbleDirectionIncoming;
+    }
     if (!avatarView || avatarView.hidden || avatarView.alpha <= 0.01 || CGRectGetWidth(cellView.bounds) < 200.0) {
         return WBBubbleDirectionUnknown;
     }
     CGRect avatarRect = [avatarView convertRect:avatarView.bounds toView:cellView];
     CGFloat cellWidth = CGRectGetWidth(cellView.bounds);
-    if (CGRectIsEmpty(avatarRect) || CGRectGetWidth(avatarRect) < 24.0 || CGRectGetHeight(avatarRect) < 24.0 || CGRectGetMinY(avatarRect) <= 1.0) {
-        return WBBubbleDirectionUnknown;
-    }
     CGFloat leftInset = CGRectGetMinX(avatarRect);
     CGFloat rightInset = cellWidth - CGRectGetMaxX(avatarRect);
     if (leftInset >= 2.0 && leftInset <= 24.0 && rightInset > cellWidth * 0.5) {
@@ -51,21 +83,8 @@ static WBBubbleDirection WBDirectionForAvatarView(UIView *avatarView, UIView *ce
     return WBBubbleDirectionUnknown;
 }
 
-static BOOL WBTailSideForBubbleView(UIView *bubbleView, UIView *avatarView, UIView *cellView, WBBubbleTailSide *tailSide) {
-    if (!bubbleView || !avatarView || !tailSide) {
-        return NO;
-    }
-    CGPoint avatarCenter = [avatarView convertPoint:CGPointMake(CGRectGetMidX(avatarView.bounds), CGRectGetMidY(avatarView.bounds)) toView:cellView];
-    CGFloat bubbleMidY = CGRectGetMidY(bubbleView.bounds);
-    CGPoint localLeft = [bubbleView convertPoint:CGPointMake(CGRectGetMinX(bubbleView.bounds), bubbleMidY) toView:cellView];
-    CGPoint localRight = [bubbleView convertPoint:CGPointMake(CGRectGetMaxX(bubbleView.bounds), bubbleMidY) toView:cellView];
-    CGFloat leftDistance = fabs(localLeft.x - avatarCenter.x);
-    CGFloat rightDistance = fabs(localRight.x - avatarCenter.x);
-    if (!isfinite(leftDistance) || !isfinite(rightDistance) || fabs(leftDistance - rightDistance) < 4.0) {
-        return NO;
-    }
-    *tailSide = leftDistance < rightDistance ? WBBubbleTailSideLeft : WBBubbleTailSideRight;
-    return YES;
+static WBBubbleTailSide WBTailSideForDirection(WBBubbleDirection direction) {
+    return direction == WBBubbleDirectionIncoming ? WBBubbleTailSideLeft : WBBubbleTailSideRight;
 }
 
 static BOOL WBValidTextBubble(UIView *bubbleView, UIView *textView, WBBubbleTailSide tailSide) {
@@ -114,11 +133,11 @@ static void WBApplyStyle(id object) {
     }
     UIView *cellView = object;
     UIView *bubbleView = WBViewFromSelector(object, @"getBgImageView");
-    UIView *textView = WBViewFromSelector(object, @"getRichTextView");
+    UIView *textView = WBTextViewForCell(object, cellView);
     UIView *avatarView = WBAvatarView(object, cellView);
-    WBBubbleDirection direction = WBDirectionForAvatarView(avatarView, cellView);
-    WBBubbleTailSide tailSide = WBBubbleTailSideLeft;
-    BOOL tailSideKnown = WBTailSideForBubbleView(bubbleView, avatarView, cellView, &tailSide);
+    WBBubbleDirection direction = WBDirectionForMessage(object, avatarView, cellView);
+    WBBubbleTailSide tailSide = WBTailSideForDirection(direction);
+    BOOL tailSideKnown = direction != WBBubbleDirectionUnknown;
     UIView *previousBubble = objc_getAssociatedObject(object, &WBLastStyledBubbleKey);
     if (previousBubble && previousBubble != bubbleView) {
         [WBBubbleStyler removeFromBubbleView:previousBubble];
@@ -143,6 +162,14 @@ static void WBLayoutContentViewHook(id object, SEL selector) {
     WBApplyStyle(object);
 }
 
+static void WBLayoutSubviewsHook(id object, SEL selector) {
+    if (!WBOriginalLayoutSubviews) {
+        return;
+    }
+    WBOriginalLayoutSubviews(object, selector);
+    WBApplyStyle(object);
+}
+
 static void WBPrepareForReuseHook(id object, SEL selector) {
     WBClearStyle(object, nil);
     if (WBOriginalPrepareForReuse) {
@@ -160,17 +187,21 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
         if (WBHookInstalled) {
             return YES;
         }
-        Class cellClass = NSClassFromString(@"TextMessageCellView");
+        Class cellClass = NSClassFromString(@"CommonMessageCellView");
         Class backgroundClass = NSClassFromString(@"YYAsyncImageView");
         Class textClass = NSClassFromString(@"RichTextView");
         SEL selector = NSSelectorFromString(@"layoutContentView");
         Method method = cellClass ? class_getInstanceMethod(cellClass, selector) : NULL;
-        BOOL selectorsAvailable = cellClass && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getBgImageView")] && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getRichTextView")] && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getHeadImageView")];
+        BOOL selectorsAvailable = cellClass && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getBgImageView")] && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getHeadImageView")];
         if (!method || !backgroundClass || !textClass || !selectorsAvailable) {
             return NO;
         }
         MSHookMessageEx(cellClass, selector, (IMP)WBLayoutContentViewHook, (IMP *)&WBOriginalLayoutContentView);
         WBHookInstalled = WBOriginalLayoutContentView != NULL;
+        SEL layoutSubviewsSelector = NSSelectorFromString(@"layoutSubviews");
+        if (WBHookInstalled && class_getInstanceMethod(cellClass, layoutSubviewsSelector)) {
+            MSHookMessageEx(cellClass, layoutSubviewsSelector, (IMP)WBLayoutSubviewsHook, (IMP *)&WBOriginalLayoutSubviews);
+        }
         SEL reuseSelector = NSSelectorFromString(@"prepareForReuse");
         if (WBHookInstalled && class_getInstanceMethod(cellClass, reuseSelector)) {
             MSHookMessageEx(cellClass, reuseSelector, (IMP)WBPrepareForReuseHook, (IMP *)&WBOriginalPrepareForReuse);
@@ -180,7 +211,7 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
 }
 
 + (NSDictionary<NSString *, id> *)configurationSnapshot {
-    Class cellClass = NSClassFromString(@"TextMessageCellView");
+    Class cellClass = NSClassFromString(@"CommonMessageCellView");
     return @{
         @"mode": @"fixed-solid-colors",
         @"themeIdentifier": [WBBubbleThemeProvider themeIdentifier],
@@ -191,9 +222,9 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
         @"textClassAvailable": @(NSClassFromString(@"RichTextView") != Nil),
         @"layoutSelectorAvailable": @(cellClass && class_getInstanceMethod(cellClass, NSSelectorFromString(@"layoutContentView")) != NULL),
         @"backgroundSelectorAvailable": @(cellClass && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getBgImageView")]),
-        @"textSelectorAvailable": @(cellClass && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getRichTextView")]),
+        @"textSelectorAvailable": @(cellClass != Nil),
         @"avatarSelectorAvailable": @(cellClass && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getHeadImageView")]),
-        @"directionRule": @"stable-avatar-edge-plus-local-bubble-edge",
+        @"directionRule": @"CMessageWrap-isSenderFromMsgWrap-plus-avatar-edge-fallback",
         @"messageDataRead": @NO,
         @"textRead": @NO,
         @"recursiveViewTreeScanned": @NO

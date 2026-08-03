@@ -26,7 +26,7 @@ static void WBRunBootstrap(BOOL hookInstalled) {
     }
     NSDictionary<NSString *, id> *snapshot = @{
         @"diagnosticsFormat": @4,
-        @"pluginVersion": @"0.1.2",
+        @"pluginVersion": @"0.1.3",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],
