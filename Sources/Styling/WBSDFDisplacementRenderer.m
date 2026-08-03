@@ -17,6 +17,19 @@ static NSUInteger WBSDFRuntimeSnapshotGeneration;
 static NSUInteger WBSDFRuntimeSnapshotRetryCount;
 static NSArray<NSString *> *WBSDFLastOriginalFilterTypes;
 static NSArray<NSString *> *WBSDFLastInstalledFilterTypes;
+static CGFloat WBSDFLastMapScale;
+static size_t WBSDFLastMapWidth;
+static size_t WBSDFLastMapHeight;
+static CGFloat WBSDFLastBackdropScale;
+static CGFloat WBSDFLastBackdropScaleRequested;
+static CGFloat WBSDFLastBackdropContentsScale;
+static CGFloat WBSDFLastBackdropWidth;
+static CGFloat WBSDFLastBackdropHeight;
+static double WBSDFLastGenerationMilliseconds;
+static BOOL WBSDFInputOffsetReadable;
+static CGFloat WBSDFInputOffsetX;
+static CGFloat WBSDFInputOffsetY;
+static double WBSDFInputAmountReadback;
 
 static id WBSDFCreateFilter(NSString *type) {
     Class filterClass = NSClassFromString(@"CAFilter");
@@ -90,6 +103,21 @@ static void WBSDFScheduleRuntimeSnapshot(void) {
             @"runtimeFailureCount": @(WBSDFRuntimeFailureCount),
             @"originalFilterTypes": WBSDFLastOriginalFilterTypes ?: @[],
             @"installedFilterTypes": WBSDFLastInstalledFilterTypes ?: @[],
+            @"mapEncoding": @"rg-normal-native-backing-scale",
+            @"mapScale": @(WBSDFLastMapScale),
+            @"backdropScale": @(WBSDFLastBackdropScale),
+            @"backdropScaleRequested": @(WBSDFLastBackdropScaleRequested),
+            @"backdropContentsScale": @(WBSDFLastBackdropContentsScale),
+            @"backdropWidth": @(WBSDFLastBackdropWidth),
+            @"backdropHeight": @(WBSDFLastBackdropHeight),
+            @"generationMilliseconds": @(WBSDFLastGenerationMilliseconds),
+            @"mapPixelWidth": @(WBSDFLastMapWidth),
+            @"mapPixelHeight": @(WBSDFLastMapHeight),
+            @"inputAmount": @20,
+            @"inputAmountReadback": @(WBSDFInputAmountReadback),
+            @"inputOffsetReadable": @(WBSDFInputOffsetReadable),
+            @"inputOffsetX": @(WBSDFInputOffsetX),
+            @"inputOffsetY": @(WBSDFInputOffsetY),
             @"updatedAt": NSDate.date
         };
     }
@@ -251,24 +279,34 @@ static float *WBSDFDistanceTransform(const uint8_t *mask, size_t width, size_t h
     return result;
 }
 
-static UIImage *WBSDFCreateDisplacementImage(UIBezierPath *path, CGRect bounds) {
+static UIImage *WBSDFCreateDisplacementImage(UIBezierPath *path, CGRect bounds, CGFloat mapScale) {
     CGFloat boundsWidth = CGRectGetWidth(bounds);
     CGFloat boundsHeight = CGRectGetHeight(bounds);
     if (!path || CGRectIsNull(bounds) || CGRectIsEmpty(bounds) || !isfinite(boundsWidth) || !isfinite(boundsHeight) || boundsWidth > 512.0 || boundsHeight > 1024.0) {
         return nil;
     }
-    size_t width = (size_t)MAX(2.0, ceil(boundsWidth));
-    size_t height = (size_t)MAX(2.0, ceil(boundsHeight));
-    if (width > SIZE_MAX / height || width * height > 262144) {
+    if (!isfinite(mapScale) || mapScale < 1.0) {
+        mapScale = 1.0;
+    }
+    mapScale = MIN(mapScale, 4.0);
+    size_t width = (size_t)MAX(2.0, ceil(boundsWidth * mapScale));
+    size_t height = (size_t)MAX(2.0, ceil(boundsHeight * mapScale));
+    if (width > SIZE_MAX / height || boundsWidth * boundsHeight > 262144.0 || width * height > 3145728) {
         return nil;
     }
-    const size_t padding = 2;
+    size_t padding = (size_t)MAX(2.0, ceil(2.0 * mapScale));
+    if (padding > SIZE_MAX / 2 || width > SIZE_MAX - padding * 2 || height > SIZE_MAX - padding * 2) {
+        return nil;
+    }
     size_t paddedWidth = width + padding * 2;
     size_t paddedHeight = height + padding * 2;
     if (paddedWidth > SIZE_MAX / paddedHeight) {
         return nil;
     }
     size_t paddedCount = paddedWidth * paddedHeight;
+    if (paddedCount > 3200000) {
+        return nil;
+    }
     uint8_t *mask = calloc(paddedCount, sizeof(uint8_t));
     if (!mask) {
         return nil;
@@ -315,7 +353,7 @@ static UIImage *WBSDFCreateDisplacementImage(UIBezierPath *path, CGRect bounds) 
     for (size_t index = 0; index < paddedCount; index++) {
         signedDistance[index] = distanceToInside[index] - distanceToOutside[index];
     }
-    const float edgeWidth = 14.0f;
+    const float edgeWidth = 14.0f * (float)mapScale;
     for (size_t y = 0; y < height; y++) {
         size_t paddedY = y + padding;
         for (size_t x = 0; x < width; x++) {
@@ -350,8 +388,13 @@ static UIImage *WBSDFCreateDisplacementImage(UIBezierPath *path, CGRect bounds) 
     CGContextRelease(imageContext);
     UIImage *image = nil;
     if (imageRef) {
-        image = [UIImage imageWithCGImage:imageRef scale:1.0 orientation:UIImageOrientationUp];
+        image = [UIImage imageWithCGImage:imageRef scale:mapScale orientation:UIImageOrientationUp];
         CGImageRelease(imageRef);
+        @synchronized(WBSDFDisplacementRenderer.class) {
+            WBSDFLastMapScale = mapScale;
+            WBSDFLastMapWidth = width;
+            WBSDFLastMapHeight = height;
+        }
     }
     free(pixels);
     return image;
@@ -409,7 +452,22 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             @"lastRuntimeFailure": WBSDFLastRuntimeFailure,
             @"runtimeFailureCount": @(WBSDFRuntimeFailureCount),
             @"originalFilterTypes": WBSDFLastOriginalFilterTypes ?: @[],
-            @"installedFilterTypes": WBSDFLastInstalledFilterTypes ?: @[]
+            @"installedFilterTypes": WBSDFLastInstalledFilterTypes ?: @[],
+            @"mapEncoding": @"rg-normal-native-backing-scale",
+            @"mapScale": @(WBSDFLastMapScale),
+            @"backdropScale": @(WBSDFLastBackdropScale),
+            @"backdropScaleRequested": @(WBSDFLastBackdropScaleRequested),
+            @"backdropContentsScale": @(WBSDFLastBackdropContentsScale),
+            @"backdropWidth": @(WBSDFLastBackdropWidth),
+            @"backdropHeight": @(WBSDFLastBackdropHeight),
+            @"generationMilliseconds": @(WBSDFLastGenerationMilliseconds),
+            @"mapPixelWidth": @(WBSDFLastMapWidth),
+            @"mapPixelHeight": @(WBSDFLastMapHeight),
+            @"inputAmount": @20,
+            @"inputAmountReadback": @(WBSDFInputAmountReadback),
+            @"inputOffsetReadable": @(WBSDFInputOffsetReadable),
+            @"inputOffsetX": @(WBSDFInputOffsetX),
+            @"inputOffsetY": @(WBSDFInputOffsetY)
         };
     }
 }
@@ -417,7 +475,7 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
 - (NSString *)imageCacheKeyForBaseKey:(NSString *)baseKey bounds:(CGRect)bounds {
     size_t width = (size_t)MAX(2.0, ceil(CGRectGetWidth(bounds)));
     size_t height = (size_t)MAX(2.0, ceil(CGRectGetHeight(bounds)));
-    return [NSString stringWithFormat:@"v2-%@-%zux%zu-%.2f", baseKey, width, height, UIScreen.mainScreen.scale];
+    return [NSString stringWithFormat:@"v3-native-%@-%zux%zu-%.2f", baseKey, width, height, UIScreen.mainScreen.scale];
 }
 
 - (WBSDFApplicationResult)scheduleImageForPath:(UIBezierPath *)path bounds:(CGRect)bounds cacheKey:(NSString *)cacheKey effectView:(UIVisualEffectView *)effectView {
@@ -438,8 +496,14 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         return WBSDFApplicationResultPending;
     }
     UIBezierPath *pathCopy = [path copy];
+    CGFloat mapScale = UIScreen.mainScreen.scale;
     dispatch_async(WBSDFGenerationQueue(), ^{
-        UIImage *image = WBSDFCreateDisplacementImage(pathCopy, bounds);
+        CFTimeInterval startedAt = CACurrentMediaTime();
+        UIImage *image = WBSDFCreateDisplacementImage(pathCopy, bounds, mapScale);
+        double generationMilliseconds = (CACurrentMediaTime() - startedAt) * 1000.0;
+        @synchronized(WBSDFDisplacementRenderer.class) {
+            WBSDFLastGenerationMilliseconds = generationMilliseconds;
+        }
         if (image) {
             NSUInteger cost = (NSUInteger)(CGImageGetWidth(image.CGImage) * CGImageGetHeight(image.CGImage) * 4);
             [WBSDFImageCache() setObject:image forKey:cacheKey cost:cost];
@@ -486,6 +550,11 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         }
         return WBSDFApplicationResultPending;
     }
+    @synchronized(WBSDFDisplacementRenderer.class) {
+        WBSDFLastBackdropContentsScale = backdropLayer.contentsScale;
+        WBSDFLastBackdropWidth = CGRectGetWidth(backdropLayer.bounds);
+        WBSDFLastBackdropHeight = CGRectGetHeight(backdropLayer.bounds);
+    }
     self.backdropRetryScheduled = NO;
     if (self.backdropLayer && self.backdropLayer != backdropLayer) {
         [self reset];
@@ -503,10 +572,34 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             WBSDFRecordRuntimeFailure(@"displacement-filter-creation-failed", YES);
             return WBSDFApplicationResultFailed;
         }
+        BOOL inputOffsetReadable = NO;
+        CGPoint inputOffset = CGPointZero;
+        @try {
+            id offsetValue = [displacement valueForKey:@"inputOffset"];
+            if ([offsetValue isKindOfClass:NSValue.class] && [offsetValue respondsToSelector:@selector(CGPointValue)]) {
+                inputOffset = [offsetValue CGPointValue];
+                inputOffsetReadable = YES;
+            }
+        } @catch (__unused NSException *exception) {
+        }
         applicationStep = @"set-input-mask-image";
         [displacement setValue:(__bridge id)image.CGImage forKey:@"inputMaskImage"];
         applicationStep = @"set-input-amount";
         [displacement setValue:@(20.0) forKey:@"inputAmount"];
+        double inputAmountReadback = 0.0;
+        @try {
+            id amountValue = [displacement valueForKey:@"inputAmount"];
+            if ([amountValue respondsToSelector:@selector(doubleValue)]) {
+                inputAmountReadback = [amountValue doubleValue];
+            }
+        } @catch (__unused NSException *exception) {
+        }
+        @synchronized(WBSDFDisplacementRenderer.class) {
+            WBSDFInputOffsetReadable = inputOffsetReadable;
+            WBSDFInputOffsetX = inputOffset.x;
+            WBSDFInputOffsetY = inputOffset.y;
+            WBSDFInputAmountReadback = inputAmountReadback;
+        }
         NSArray *baseFilters = self.originalFilters;
         if (self.backdropLayer != backdropLayer || !self.installedFilters || ![currentFilters isEqual:self.installedFilters]) {
             NSMutableArray *externalFilters = [currentFilters isKindOfClass:NSArray.class] ? [currentFilters mutableCopy] : [NSMutableArray array];
@@ -534,9 +627,25 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         NSNumber *backdropScale = @(UIScreen.mainScreen.scale);
         @try {
             [backdropLayer setValue:backdropScale forKey:@"scale"];
-            self.installedBackdropScale = backdropScale;
+            id installedScale = backdropScale;
+            @try {
+                id scaleReadback = [backdropLayer valueForKey:@"scale"];
+                if ([scaleReadback respondsToSelector:@selector(doubleValue)]) {
+                    installedScale = scaleReadback;
+                }
+            } @catch (__unused NSException *exception) {
+            }
+            self.installedBackdropScale = installedScale;
+            @synchronized(WBSDFDisplacementRenderer.class) {
+                WBSDFLastBackdropScaleRequested = backdropScale.doubleValue;
+                WBSDFLastBackdropScale = [installedScale doubleValue];
+            }
         } @catch (__unused NSException *exception) {
             self.installedBackdropScale = nil;
+            @synchronized(WBSDFDisplacementRenderer.class) {
+                WBSDFLastBackdropScaleRequested = backdropScale.doubleValue;
+                WBSDFLastBackdropScale = 0.0;
+            }
         }
         self.effectView = effectView;
         self.backdropLayer = backdropLayer;

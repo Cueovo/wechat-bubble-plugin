@@ -92,6 +92,19 @@
 2. 在高细节聊天背景上确认气泡边缘发生明显局部弯曲，中心区域保持接近透明，不再主要表现为均匀磨砂。
 3. 快速上下滚动相同会话并与 0.6.1 对比掉帧；覆盖相同尺寸 Cell 复用、长消息和连续消息分段。
 
+## 0.6.3 原生 backing scale 位移贴图
+
+- 0.6.2 真机确认活动 backdrop 链仅包含 `displacementMap`，磨砂已消失且没有运行时错误，但 1× 位移图传给 3× backdrop 后折射仍不明显。
+- 位移图现在按 `UIScreen.scale` 生成原始 CGImage 像素，路径变换、SDF 边缘宽度和 padding 同步按 scale 换算；贴图与 backdrop backing scale 保持一致。
+- 缓存键升级为 `v3-native`，输出和 padded 像素均有原生分辨率预算，继续保留串行异步生成、内存成本限制、共享等待者通知和失败时的进程级安全回退。
+- 格式 16 诊断新增 `mapEncoding`、`mapScale`、`backdropScaleRequested`、`backdropScale` 读回值、`backdropContentsScale`、backdrop 尺寸、map 像素尺寸、`generationMilliseconds`、`inputAmountReadback` 和默认 `inputOffset` 读回值。
+
+### 0.6.3 真机复测
+
+1. 确认 `mapEncoding=rg-normal-native-backing-scale`，且 `mapScale` 与 `backdropScale` 相等。
+2. 将 `mapPixelWidth/mapPixelHeight` 与气泡点尺寸对比，确认约为设备 scale 倍数。
+3. 在文字气泡覆盖背景树枝、灯光边缘等高对比细节的位置观察边缘弯曲，并再次检查快速滚动性能。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。
