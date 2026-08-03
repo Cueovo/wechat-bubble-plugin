@@ -281,6 +281,25 @@ static void WBRefreshAllVisibleMessageCells(void) {
     }
 }
 
+__attribute__((used)) static void WBRefreshAllVisibleMessageCells(void) {
+    Class cellClass = NSClassFromString(@"CommonMessageCellView");
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateUnattached) {
+            continue;
+        }
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            if (window.hidden) {
+                continue;
+            }
+            NSMutableArray<UIView *> *cells = [NSMutableArray array];
+            WBCollectMessageCells(window, cellClass, cells);
+            for (UIView *cell in cells) {
+                WBApplyStyle(cell, YES);
+            }
+        }
+    }
+}
+
 static void WBLayoutContentViewHook(id object, SEL selector) {
     if (!WBOriginalLayoutContentView) {
         return;
