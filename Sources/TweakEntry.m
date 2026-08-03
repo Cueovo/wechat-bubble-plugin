@@ -11,7 +11,7 @@
 #import "Styling/WBBubblePreferences.h"
 #import "Styling/WBBubbleSettingsHook.h"
 
-NSString * const WeChatBubbleBuildStage = @"explicit-backdrop-ciwarp-refraction";
+NSString * const WeChatBubbleBuildStage = @"realtime-shared-backdrop-metal-liquid-glass";
 
 static BOOL WBStyleHookInstalled;
 static BOOL WBStableLaunchConfirmationScheduled;
@@ -42,8 +42,8 @@ static void WBRunBootstrap(BOOL hookInstalled) {
         styling[@"reason"] = @"required-runtime-capability-missing";
     }
     NSDictionary<NSString *, id> *snapshot = @{
-        @"diagnosticsFormat": @18,
-        @"pluginVersion": @"0.6.5",
+        @"diagnosticsFormat": @19,
+        @"pluginVersion": @"0.7.0",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],

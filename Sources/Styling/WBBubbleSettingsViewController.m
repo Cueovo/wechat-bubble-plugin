@@ -66,7 +66,7 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
         if ([WBBubbleThemeProvider nativeLiquidGlassAvailable]) {
             return @"原生 Liquid Glass 不使用纯色主题颜色。";
         }
-        return [WBBubbleThemeProvider explicitRefractionAvailable] ? @"兼容折射会显式捕获气泡后的局部背景，并通过 Core Image 边缘位移采样产生可见弯曲，同时保留高光和内阴影。" : @"当前设备已回退到无色背景采样、镜片放大、边缘高光和内阴影。";
+        return [WBBubbleThemeProvider realtimeMetalAvailable] ? @"低版本使用持续显示链路、共享窗口背景纹理和 Metal SDF 光学采样，滚动与动画期间实时更新折射、色散、边缘高光和自适应明暗。" : @"当前设备已回退到无色背景采样、镜片放大、边缘高光和内阴影。";
     }
     return nil;
 }
@@ -141,7 +141,7 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
             NSString *backend = [WBBubbleThemeProvider resolvedMaterialBackend];
             NSString *detail = @"纯色";
             if (glass) {
-                detail = [backend isEqualToString:@"native-uiglass-effect"] ? @"Liquid Glass（原生）" : ([backend isEqualToString:@"compatibility-explicit-refraction"] ? @"Liquid Glass（显式折射）" : @"Liquid Glass（基础兼容）");
+                detail = [backend isEqualToString:@"native-uiglass-effect"] ? @"Liquid Glass（原生）" : ([backend isEqualToString:@"compatibility-realtime-metal"] ? @"Liquid Glass（实时 Metal）" : @"Liquid Glass（基础兼容）");
             }
             UITableViewCell *cell = [self baseCellWithTitle:@"气泡材质" detail:detail];
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;

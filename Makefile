@@ -18,11 +18,11 @@ WeChatBubble_FILES = \
 	Sources/Styling/WBBubbleSettingsHook.m \
 	Sources/Styling/WBBubbleSettingsViewController.m \
 	Sources/Styling/WBBubbleThemeProvider.m \
-	Sources/Styling/WBExplicitRefractionRenderer.m \
+	Sources/Styling/WBRealtimeGlassRenderer.m \
 	Sources/Styling/WBBubbleStyler.m \
 	Sources/Styling/WBTextBubbleStyleHook.m
 WeChatBubble_CFLAGS = -fobjc-arc
-WeChatBubble_FRAMEWORKS = Foundation UIKit QuartzCore CoreImage
+WeChatBubble_FRAMEWORKS = Foundation UIKit QuartzCore Metal CoreVideo
 WeChatBubble_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk

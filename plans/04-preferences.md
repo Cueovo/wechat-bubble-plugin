@@ -133,6 +133,23 @@
 3. 快速连续滚动后停住，确认折射纹理会更新到当前位置，不出现旧消息文字、头像或气泡自身的递归残影；比较 `captureMilliseconds` 与 `warpMilliseconds` 并观察是否有明显掉帧。
 4. 覆盖收发方向、单段和连续消息分段、浅色/深色、切换纯色与关闭插件；捕获失败时气泡仍应显示透明兼容材质而不是消失或崩溃。
 
+## 0.7.0 低版本实时 Metal 液态玻璃重写
+
+- 0.6.5 的 60ms debounce 只会在位置稳定后更新气泡纹理，本质仍是静态快照，不满足滚动和动画期间实时折射要求；该路线从发布候选中否决，`CIWarpKernel` 不再进入构建。
+- 新后端为 `compatibility-realtime-metal`。每个窗口只维护一个 `CADisplayLink`、一个背景捕获缓冲区和一张 IOSurface-backed `CVMetalTexture`；一帧只捕获窗口一次，所有可见文字气泡共享同一背景纹理，不再逐气泡创建 `UIImage` 或执行 Core Image 输出。
+- 捕获事务会同步排除所有已注册的 `CommonMessageCellView`，得到不含气泡文字、头像和插件覆盖层的底层聊天背景，并在同一 Core Animation 事务提交前恢复 opacity，避免屏幕闪烁和递归残影。
+- 每个气泡使用透明 `CAMetalLayer`，在共享命令缓冲区中按窗口坐标采样背景；fragment shader 持续计算圆角 SDF 法线、边缘折射、中心透镜放大、RGB 色散、低成本软化、背景亮度 tint、内侧暗边和方向性 rim highlight。现有气泡路径 mask 继续精确裁切左右尾巴和多段轮廓。
+- 同一窗口最多保留一帧 GPU 工作；上一帧尚未完成时直接丢弃新帧，避免覆盖 GPU 正在读取的 CVPixelBuffer。无可见气泡时销毁显示链路；Metal pipeline、背景捕获或 drawable 不可用时继续显示无色 UIKit 材质回退。
+- 诊断格式升级到 19，新增 `glassCapabilities.realtimeMetal` 和 `styling.realtimeMetalRuntime`，记录共享捕获次数、实际渲染气泡帧数、丢帧、捕获/编码耗时、捕获 scale、像素尺寸和 Metal 错误。
+
+### 0.7.0 真机复测
+
+1. 在高对比聊天背景上持续拖动和惯性滚动，确认背景弯曲与气泡位置逐帧同步，不能等停止后才跳到新纹理。
+2. 停住后缓慢移动列表，检查边缘折射、轻微色散、方向性亮边和暗边；气泡中心保持接近原背景，不应退化成整块模糊或整体静态放大。
+3. 导出格式 19 诊断，确认 `resolvedMaterialBackend=compatibility-realtime-metal`、`realtimeMetalRuntime.applicationSucceeded=true`、`captureCount` 持续增长、`renderedFrameCount` 大于捕获次数且 `lastFailure=none`。
+4. 快速滚动 30 秒并记录 `captureMilliseconds`、`encodeMilliseconds`、`droppedFrameCount`；确认没有明显持续掉帧、内存增长、文字/头像递归残影和 Cell 复用串位。
+5. 覆盖长消息、多段消息、左右尾巴、浅色/深色、前后台切换、切换纯色和关闭插件；任何 Metal/capture 失败都只能回退到无色 UIKit 材质，不能导致气泡消失或微信崩溃。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。
