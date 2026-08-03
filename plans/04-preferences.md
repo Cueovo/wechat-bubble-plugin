@@ -50,6 +50,23 @@
 3. 切回纯色并关闭插件，确认最新微信原始气泡素材能恢复，且纯色参数原值仍保留。
 4. 在有聊天背景细节的位置检查无色背景采样、轻微镜片放大、亮边和暗边；纯白背景无法充分展示折射层次，不作为唯一视觉样本。
 
+## 0.6.0 SDF 实时折射
+
+- iOS 15–25 优先动态探测 `CABackdropLayer` 和 `CAFilter(displacementMap)`，能力完整时使用 `compatibility-sdf-displacement`；探测或应用异常会在当前微信进程内禁用该路径并回退 `compatibility-colorless-lens`。
+- 位移图从现有气泡主体、圆角、尾巴和分段路径栅格化生成，使用二维欧氏距离变换构造 signed distance field，再从梯度编码 RG 折射方向；图像按尺寸、尾巴方向、分段位置和圆角缓存。
+- 折射滤镜直接作用于 `UIVisualEffectView` 内部 backdrop layer，并保留 UIKit 原有轻模糊滤镜链以及方向性 rim highlight 和 inner shading，不读取纯色主题参数。
+- 诊断格式 13 新增 `glassCapabilities.sdfDisplacement`，记录能力探测、当前进程降级状态和原因；后端实际生效后应为 `compatibility-sdf-displacement`。
+- 该实现动态使用私有 Core Animation API，适用于当前 RootHide 注入环境，并保持业务渲染代码不依赖 RootHide 路径；重签名 IPA 仍需要独立的注入、Hook runtime 和签名构建目标。
+
+### 0.6.0 真机测试
+
+1. 使用包含线条、文字或图片细节的聊天背景，确认细节经过气泡边缘时发生局部方向性弯曲，而不是整体等比放大。
+2. 检查诊断为 `resolvedMaterialBackend=compatibility-sdf-displacement`、`glassCapabilities.sdfDisplacement.available=true`、`probeReason=available`；若回退，结合 `probeReason` 和 `lastRuntimeFailure` 定位缺失能力。
+3. 覆盖左右尾巴、单段和多段气泡、极短与极长文字、浅色和深色外观，确认折射方向随轮廓变化且没有矩形边界。
+4. 快速滚动并反复进出聊天，检查首次生成缓存时无明显卡顿、内存不持续增长、Cell 复用无旧位移图串位。
+5. 切换纯色、关闭插件并重新开启，确认 backdrop filters 被移除、微信原始素材恢复、再次进入玻璃后折射可重建。
+6. 模拟私有滤镜不可用或应用异常，确认只回退基础兼容后端，不导致微信启动崩溃或气泡消失。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。

@@ -1,4 +1,5 @@
 #import "WBBubbleStyler.h"
+#import "WBSDFDisplacementRenderer.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -113,6 +114,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
 @property (nonatomic, strong) CAShapeLayer *shadeMaskLayer;
 @property (nonatomic, strong) CAShapeLayer *borderLayer;
 @property (nonatomic, strong) CAShapeLayer *maskLayer;
+@property (nonatomic, strong) WBSDFDisplacementRenderer *sdfRenderer;
 @property (nonatomic, copy, nullable) NSString *effectSignature;
 @property (nonatomic, assign) WBBubbleDirection direction;
 @property (nonatomic, assign) WBBubbleTailSide tailSide;
@@ -169,6 +171,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         _maskLayer = [CAShapeLayer layer];
         [_maskLayer setContentsScale:UIScreen.mainScreen.scale];
         _maskLayer.fillColor = UIColor.blackColor.CGColor;
+        _sdfRenderer = [WBSDFDisplacementRenderer new];
     }
     return self;
 }
@@ -179,28 +182,42 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
     if ([self.effectSignature isEqualToString:signature]) {
         return;
     }
-    self.effectSignature = signature;
     if ([backend isEqualToString:@"native-uiglass-effect"]) {
-        id effect = [[NSClassFromString(@"UIGlassEffect") alloc] init];
-        SEL tintSelector = NSSelectorFromString(@"setTintColor:");
-        SEL interactiveSelector = NSSelectorFromString(@"setInteractive:");
-        if ([effect respondsToSelector:tintSelector]) {
+        @try {
+            [self.sdfRenderer reset];
+            id effect = [[NSClassFromString(@"UIGlassEffect") alloc] init];
+            SEL tintSelector = NSSelectorFromString(@"setTintColor:");
+            SEL interactiveSelector = NSSelectorFromString(@"setInteractive:");
             ((void (*)(id, SEL, id))objc_msgSend)(effect, tintSelector, nil);
-        }
-        if ([effect respondsToSelector:interactiveSelector]) {
             ((void (*)(id, SEL, BOOL))objc_msgSend)(effect, interactiveSelector, NO);
+            if ([effect isKindOfClass:UIVisualEffect.class]) {
+                self.effectView.transform = CGAffineTransformIdentity;
+                self.effectView.effect = (UIVisualEffect *)effect;
+                self.tintView.hidden = YES;
+                self.effectSignature = signature;
+                return;
+            }
+        } @catch (__unused NSException *exception) {
         }
-        if ([effect isKindOfClass:UIVisualEffect.class]) {
-            self.effectView.transform = CGAffineTransformIdentity;
-            self.effectView.effect = (UIVisualEffect *)effect;
-            self.tintView.hidden = YES;
-            return;
-        }
+        [WBBubbleThemeProvider disableNativeLiquidGlassForProcess];
+        self.effectSignature = nil;
+        [self updateGlassEffectForDarkAppearance:dark];
+        return;
     }
+    if ([backend isEqualToString:@"compatibility-sdf-displacement"]) {
+        self.effectView.transform = CGAffineTransformIdentity;
+        self.effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+        self.tintView.hidden = YES;
+        self.tintView.backgroundColor = UIColor.clearColor;
+        self.effectSignature = signature;
+        return;
+    }
+    [self.sdfRenderer reset];
     self.effectView.transform = CGAffineTransformMakeScale(1.045, 1.08);
     self.effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
     self.tintView.hidden = YES;
     self.tintView.backgroundColor = UIColor.clearColor;
+    self.effectSignature = signature;
 }
 
 - (void)layoutSubviews {
@@ -212,16 +229,31 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
     BOOL dark = traits.userInterfaceStyle == UIUserInterfaceStyleDark;
     UIColor *fillColor = [WBBubbleThemeProvider fillColorForDirection:self.direction traitCollection:traits];
     BOOL usesGlass = [WBBubbleThemeProvider usesGlassMaterial];
-    BOOL compatibilityGlass = usesGlass && [[WBBubbleThemeProvider resolvedMaterialBackend] isEqualToString:@"compatibility-colorless-lens"];
+    NSString *backend = [WBBubbleThemeProvider resolvedMaterialBackend];
+    BOOL sdfGlass = NO;
     self.effectView.frame = localBounds;
     self.effectView.hidden = !usesGlass;
     if (usesGlass) {
         [self updateGlassEffectForDarkAppearance:dark];
+        backend = [WBBubbleThemeProvider resolvedMaterialBackend];
+        sdfGlass = [backend isEqualToString:@"compatibility-sdf-displacement"];
+        if (sdfGlass) {
+            NSString *cacheKey = [NSString stringWithFormat:@"%ld-%ld-%.2f", (long)self.tailSide, (long)self.segmentPosition, [WBBubbleThemeProvider cornerRadius]];
+            WBSDFApplicationResult result = [self.sdfRenderer applyToEffectView:self.effectView path:path bounds:localBounds cacheKey:cacheKey];
+            if (result == WBSDFApplicationResultFailed) {
+                self.effectSignature = nil;
+                backend = [WBBubbleThemeProvider resolvedMaterialBackend];
+                sdfGlass = NO;
+                [self updateGlassEffectForDarkAppearance:dark];
+            }
+        }
     } else {
+        [self.sdfRenderer reset];
         self.effectView.transform = CGAffineTransformIdentity;
         self.effectView.effect = nil;
         self.effectSignature = nil;
     }
+    BOOL compatibilityGlass = usesGlass && ([backend isEqualToString:@"compatibility-colorless-lens"] || sdfGlass);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     self.shapeLayer.frame = localBounds;

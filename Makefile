@@ -18,6 +18,7 @@ WeChatBubble_FILES = \
 	Sources/Styling/WBBubbleSettingsHook.m \
 	Sources/Styling/WBBubbleSettingsViewController.m \
 	Sources/Styling/WBBubbleThemeProvider.m \
+	Sources/Styling/WBSDFDisplacementRenderer.m \
 	Sources/Styling/WBBubbleStyler.m \
 	Sources/Styling/WBTextBubbleStyleHook.m
 WeChatBubble_CFLAGS = -fobjc-arc

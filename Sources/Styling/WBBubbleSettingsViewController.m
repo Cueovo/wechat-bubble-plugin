@@ -63,7 +63,10 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0 && [WBBubblePreferences material] == WBBubbleMaterialGlass) {
-        return [WBBubbleThemeProvider nativeLiquidGlassAvailable] ? @"原生 Liquid Glass 不使用纯色主题颜色。" : @"兼容玻璃使用无色背景采样、镜片放大、边缘高光和内阴影，不使用纯色主题颜色。";
+        if ([WBBubbleThemeProvider nativeLiquidGlassAvailable]) {
+            return @"原生 Liquid Glass 不使用纯色主题颜色。";
+        }
+        return [WBBubbleThemeProvider sdfDisplacementAvailable] ? @"兼容折射使用 SDF 位移图实时弯曲气泡后的内容，并叠加无色模糊、边缘高光和内阴影。" : @"当前设备已回退到无色背景采样、镜片放大、边缘高光和内阴影。";
     }
     return nil;
 }
@@ -135,7 +138,11 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
     if (indexPath.section == 0) {
         if (indexPath.row == 1) {
             BOOL glass = [WBBubblePreferences material] == WBBubbleMaterialGlass;
-            NSString *detail = glass ? ([WBBubbleThemeProvider nativeLiquidGlassAvailable] ? @"Liquid Glass（原生）" : @"Liquid Glass（兼容）") : @"纯色";
+            NSString *backend = [WBBubbleThemeProvider resolvedMaterialBackend];
+            NSString *detail = @"纯色";
+            if (glass) {
+                detail = [backend isEqualToString:@"native-uiglass-effect"] ? @"Liquid Glass（原生）" : ([backend isEqualToString:@"compatibility-sdf-displacement"] ? @"Liquid Glass（SDF 折射）" : @"Liquid Glass（基础兼容）");
+            }
             UITableViewCell *cell = [self baseCellWithTitle:@"气泡材质" detail:detail];
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -187,7 +194,7 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     if (indexPath.section == 0 && indexPath.row == 1) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"气泡材质" message:@"iOS 26 使用 Apple 原生 Liquid Glass；较早系统使用兼容玻璃效果。" preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"气泡材质" message:@"iOS 26 优先使用 Apple 原生 Liquid Glass；较早系统在能力可用时使用 SDF 实时折射，否则安全回退到基础兼容效果。" preferredStyle:UIAlertControllerStyleAlert];
         __weak typeof(self) weakSelf = self;
         [alert addAction:[UIAlertAction actionWithTitle:@"纯色" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
             [WBBubblePreferences setMaterial:WBBubbleMaterialSolid];
