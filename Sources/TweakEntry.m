@@ -6,6 +6,8 @@
 #import "Discovery/WBCapabilityRegistry.h"
 #import "Discovery/WBDiagnostics.h"
 #import "Styling/WBTextBubbleStyleHook.h"
+#import "Styling/WBBubblePreferences.h"
+#import "Styling/WBBubbleSettingsHook.h"
 
 NSString * const WeChatBubbleBuildStage = @"text-bubble-core";
 
@@ -25,8 +27,8 @@ static void WBRunBootstrap(BOOL hookInstalled) {
         styling[@"reason"] = @"required-runtime-capability-missing";
     }
     NSDictionary<NSString *, id> *snapshot = @{
-        @"diagnosticsFormat": @4,
-        @"pluginVersion": @"0.1.7",
+        @"diagnosticsFormat": @5,
+        @"pluginVersion": @"0.2.0",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],

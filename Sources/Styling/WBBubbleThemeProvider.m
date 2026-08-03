@@ -1,4 +1,5 @@
 #import "WBBubbleThemeProvider.h"
+#import "WBBubblePreferences.h"
 
 @implementation WBBubbleThemeProvider
 
@@ -7,7 +8,7 @@
 }
 
 + (BOOL)isEnabled {
-    return YES;
+    return [WBBubblePreferences isEnabled];
 }
 
 + (NSString *)themeIdentifier {

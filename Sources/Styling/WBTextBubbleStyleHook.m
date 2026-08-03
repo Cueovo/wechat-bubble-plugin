@@ -1,5 +1,6 @@
 #import "WBTextBubbleStyleHook.h"
 #import "WBBubbleStyler.h"
+#import "WBBubblePreferences.h"
 #import "WBBubbleThemeProvider.h"
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
@@ -259,6 +260,17 @@ static void WBRefreshMessageSegments(id object, UIView *cellView) {
         }
     }
     WBRefreshingMessageSegments = NO;
+}
+
+static void WBRefreshAllVisibleMessageCells(void) {
+    Class cellClass = NSClassFromString(@"CommonMessageCellView");
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        NSMutableArray<UIView *> *cells = [NSMutableArray array];
+        WBCollectMessageCells(window, cellClass, cells);
+        for (UIView *cell in cells) {
+            WBApplyStyle(cell, YES);
+        }
+    }
 }
 
 static void WBLayoutContentViewHook(id object, SEL selector) {
