@@ -47,9 +47,9 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 - (UIView *)colorSwatch:(UIColor *)color {
     UIView *swatch = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, 32.0, 32.0)];
     swatch.backgroundColor = color;
-    swatch.layer.cornerRadius = 8.0;
-    swatch.layer.borderWidth = 1.0 / UIScreen.mainScreen.scale;
-    swatch.layer.borderColor = [UIColor colorWithWhite:0.5 alpha:0.5].CGColor;
+    [swatch.layer setCornerRadius:8.0];
+    [swatch.layer setBorderWidth:1.0 / UIScreen.mainScreen.scale];
+    [swatch.layer setBorderColor:[UIColor colorWithWhite:0.5 alpha:0.5].CGColor];
     return swatch;
 }
 
