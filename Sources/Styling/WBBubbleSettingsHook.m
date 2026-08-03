@@ -6,7 +6,10 @@
 #import <objc/runtime.h>
 #import <substrate.h>
 
-static void (*WBOriginalSettingsLifecycle)(id, SEL);
+static void (*WBOriginalSettingsReload)(id, SEL);
+static void (*WBOriginalSettingsWillAppear)(id, SEL);
+static void (*WBOriginalSettingsViewWillAppear)(id, SEL, BOOL);
+static void (*WBOriginalSettingsViewDidLoad)(id, SEL);
 static BOOL WBSettingsHookInstalled;
 static BOOL WBSettingsEntryAvailable;
 static BOOL WBSettingsEntryModelAdded;
@@ -15,11 +18,13 @@ static BOOL WBSettingsTableManagerAvailable;
 static BOOL WBSettingsAPISignaturesValid;
 static BOOL WBSettingsTableReloaded;
 static BOOL WBSettingsHookUsesReloadTableData;
+static BOOL WBSettingsPluginsManagerAvailable;
 static BOOL WBSettingsPluginsPortalAvailable;
 static BOOL WBSettingsPluginsPortalRegistered;
 static BOOL WBSettingsPluginsPortalDidRegister;
 static BOOL WBSettingsDuplicateEntryFound;
 static NSString *WBSettingsLifecycleName = @"unavailable";
+static NSString *WBSettingsLastLifecycleName = @"not-invoked";
 static NSString *WBSettingsModelPath = @"unavailable";
 static NSString *WBSettingsInsertionMethod = @"none";
 static NSString *WBSettingsEntryReason = @"not-attempted";
@@ -67,6 +72,10 @@ static BOOL WBNoArgumentObjectMethodMatches(Method method) {
 
 static BOOL WBNoArgumentVoidMethodMatches(Method method) {
     return method && method_getNumberOfArguments(method) == 2 && WBReturnMatches(method, 'v') && WBArgumentMatches(method, 0, '@') && WBArgumentMatches(method, 1, ':');
+}
+
+static BOOL WBBooleanArgumentVoidMethodMatches(Method method) {
+    return method && method_getNumberOfArguments(method) == 3 && WBReturnMatches(method, 'v') && WBArgumentMatches(method, 0, '@') && WBArgumentMatches(method, 1, ':') && WBIntegerArgumentMatches(method, 2);
 }
 
 static BOOL WBObjectArgumentMethodMatches(Method method) {
@@ -180,6 +189,7 @@ static void WBResetSettingsEntryState(void) {
     WBSettingsTableManagerAvailable = NO;
     WBSettingsAPISignaturesValid = NO;
     WBSettingsTableReloaded = NO;
+    WBSettingsPluginsManagerAvailable = NO;
     WBSettingsPluginsPortalAvailable = NO;
     WBSettingsPluginsPortalRegistered = NO;
     WBSettingsDuplicateEntryFound = NO;
@@ -187,42 +197,55 @@ static void WBResetSettingsEntryState(void) {
     WBSettingsInsertionMethod = @"none";
 }
 
-static BOOL WBRegisterPluginsPortal(id object, id tableManager) {
-    NSSet<NSString *> *portalTitles = [NSSet setWithObjects:@"插件", @"插件管理", nil];
-    WBSettingsPluginsPortalAvailable = WBIvarValue(object, @"_pluginCellInfo") != nil || WBTableManagerContainsTitle(tableManager, portalTitles);
-    if (!WBSettingsPluginsPortalAvailable) {
-        return NO;
-    }
-    if (WBSettingsPluginsPortalDidRegister) {
-        WBSettingsPluginsPortalRegistered = YES;
-        WBSettingsEntryAvailable = YES;
-        WBSettingsAPISignaturesValid = YES;
-        WBSettingsModelPath = @"WCPluginsMgr";
-        WBSettingsInsertionMethod = @"registerControllerWithTitle:version:controller:";
-        WBSettingsEntryReason = @"already-registered-to-plugins-portal";
-        return YES;
-    }
-    Class managerClass = NSClassFromString(@"WCPluginsMgr");
-    SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
-    SEL registerSelector = NSSelectorFromString(@"registerControllerWithTitle:version:controller:");
-    Method sharedMethod = managerClass ? class_getClassMethod(managerClass, sharedSelector) : NULL;
-    if (!WBNoArgumentObjectMethodMatches(sharedMethod)) {
-        return NO;
-    }
-    id manager = ((id (*)(id, SEL))objc_msgSend)(managerClass, sharedSelector);
-    Method registerMethod = manager ? class_getInstanceMethod(object_getClass(manager), registerSelector) : NULL;
-    if (!registerMethod || method_getNumberOfArguments(registerMethod) != 5 || !WBReturnMatches(registerMethod, 'v') || !WBArgumentMatches(registerMethod, 0, '@') || !WBArgumentMatches(registerMethod, 1, ':') || !WBArgumentMatches(registerMethod, 2, '@') || !WBArgumentMatches(registerMethod, 3, '@') || !WBArgumentMatches(registerMethod, 4, '@')) {
-        return NO;
-    }
-    ((void (*)(id, SEL, id, id, id))objc_msgSend)(manager, registerSelector, @"聊天气泡", @"0.3.2", NSStringFromClass(WBBubbleSettingsViewController.class));
-    WBSettingsPluginsPortalDidRegister = YES;
+static void WBMarkPluginsRegistration(NSString *reason) {
     WBSettingsPluginsPortalRegistered = YES;
     WBSettingsEntryAvailable = YES;
     WBSettingsAPISignaturesValid = YES;
     WBSettingsModelPath = @"WCPluginsMgr";
     WBSettingsInsertionMethod = @"registerControllerWithTitle:version:controller:";
-    WBSettingsEntryReason = @"registered-to-plugins-portal";
+    WBSettingsEntryReason = reason;
+}
+
+static BOOL WBRegisterWithPluginsManager(void) {
+    Class managerClass = NSClassFromString(@"WCPluginsMgr");
+    SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
+    SEL registerSelector = NSSelectorFromString(@"registerControllerWithTitle:version:controller:");
+    Method sharedMethod = managerClass ? class_getClassMethod(managerClass, sharedSelector) : NULL;
+    WBSettingsPluginsManagerAvailable = NO;
+    if (!WBNoArgumentObjectMethodMatches(sharedMethod)) {
+        return NO;
+    }
+    if (WBSettingsPluginsPortalDidRegister) {
+        WBSettingsPluginsManagerAvailable = YES;
+        WBMarkPluginsRegistration(@"already-registered-with-plugins-manager");
+        return YES;
+    }
+    id manager = nil;
+    @try {
+        manager = ((id (*)(id, SEL))objc_msgSend)(managerClass, sharedSelector);
+    } @catch (__unused NSException *exception) {
+        return NO;
+    }
+    Method registerMethod = manager ? class_getInstanceMethod(object_getClass(manager), registerSelector) : NULL;
+    if (!registerMethod || method_getNumberOfArguments(registerMethod) != 5 || !WBReturnMatches(registerMethod, 'v') || !WBArgumentMatches(registerMethod, 0, '@') || !WBArgumentMatches(registerMethod, 1, ':') || !WBArgumentMatches(registerMethod, 2, '@') || !WBArgumentMatches(registerMethod, 3, '@') || !WBArgumentMatches(registerMethod, 4, '@')) {
+        return NO;
+    }
+    WBSettingsPluginsManagerAvailable = YES;
+    @try {
+        ((void (*)(id, SEL, id, id, id))objc_msgSend)(manager, registerSelector, @"聊天气泡", @"0.3.3", NSStringFromClass(WBBubbleSettingsViewController.class));
+    } @catch (__unused NSException *exception) {
+        WBSettingsPluginsManagerAvailable = NO;
+        return NO;
+    }
+    WBSettingsPluginsPortalDidRegister = YES;
+    WBMarkPluginsRegistration(@"registered-with-plugins-manager");
     return YES;
+}
+
+static BOOL WBRegisterPluginsPortal(id object, id tableManager) {
+    NSSet<NSString *> *portalTitles = [NSSet setWithObjects:@"插件", @"插件管理", nil];
+    WBSettingsPluginsPortalAvailable = WBIvarValue(object, @"_pluginCellInfo") != nil || WBTableManagerContainsTitle(tableManager, portalTitles);
+    return WBRegisterWithPluginsManager();
 }
 
 static BOOL WBAddModernSettingsEntry(id object, id tableManager) {
@@ -304,7 +327,11 @@ static BOOL WBAddSettingsEntry(id object) {
     WBResetSettingsEntryState();
     id tableManager = WBIvarValue(object, @"m_tableViewMgr");
     WBSettingsTableManagerAvailable = tableManager != nil;
-    if (tableManager && (WBRegisterPluginsPortal(object, tableManager) || WBAddModernSettingsEntry(object, tableManager))) {
+    if (WBRegisterPluginsPortal(object, tableManager)) {
+        objc_setAssociatedObject(object, WBSettingsEntryAddedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return YES;
+    }
+    if (tableManager && WBAddModernSettingsEntry(object, tableManager)) {
         objc_setAssociatedObject(object, WBSettingsEntryAddedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         return YES;
     }
@@ -323,11 +350,13 @@ static NSDictionary<NSString *, id> *WBSettingsConfigurationSnapshot(void) {
         @"targetClassAvailable": @(NSClassFromString(@"NewSettingViewController") != Nil),
         @"hookInstalled": @(WBSettingsHookInstalled),
         @"lifecycleSelector": WBSettingsLifecycleName,
+        @"lastLifecycleSelector": WBSettingsLastLifecycleName,
         @"entryAvailable": @(WBSettingsEntryAvailable),
         @"entryModelAdded": @(WBSettingsEntryModelAdded),
         @"visibilityVerified": @NO,
         @"tableManagerAvailable": @(WBSettingsTableManagerAvailable),
         @"tableInfoAvailable": @(WBSettingsTableInfoAvailable),
+        @"pluginsManagerAvailable": @(WBSettingsPluginsManagerAvailable),
         @"pluginsPortalAvailable": @(WBSettingsPluginsPortalAvailable),
         @"pluginsPortalRegistered": @(WBSettingsPluginsPortalRegistered),
         @"duplicateEntryFound": @(WBSettingsDuplicateEntryFound),
@@ -345,17 +374,41 @@ static void WBRecordSettingsDiagnostics(void) {
     NSLog(@"[WeChatBubble] settings-entry=%@ diagnostics=%@", WBSettingsEntryReason, updated ? @"updated" : @"failed");
 }
 
+static void WBCallOriginalSettingsLifecycle(id object, SEL selector) {
+    if (selector == NSSelectorFromString(@"reloadTableData") && WBOriginalSettingsReload) {
+        WBOriginalSettingsReload(object, selector);
+    } else if (selector == NSSelectorFromString(@"willAppear") && WBOriginalSettingsWillAppear) {
+        WBOriginalSettingsWillAppear(object, selector);
+    } else if (selector == @selector(viewDidLoad) && WBOriginalSettingsViewDidLoad) {
+        WBOriginalSettingsViewDidLoad(object, selector);
+    }
+}
+
 static void WBSettingsLifecycleHook(id object, SEL selector) {
     if (objc_getAssociatedObject(object, WBSettingsLifecycleInProgressKey)) {
-        if (WBOriginalSettingsLifecycle) {
-            WBOriginalSettingsLifecycle(object, selector);
+        WBCallOriginalSettingsLifecycle(object, selector);
+        return;
+    }
+    objc_setAssociatedObject(object, WBSettingsLifecycleInProgressKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    WBCallOriginalSettingsLifecycle(object, selector);
+    WBSettingsLastLifecycleName = NSStringFromSelector(selector);
+    WBAddSettingsEntry(object);
+    WBRecordSettingsDiagnostics();
+    objc_setAssociatedObject(object, WBSettingsLifecycleInProgressKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void WBSettingsViewWillAppearHook(id object, SEL selector, BOOL animated) {
+    if (objc_getAssociatedObject(object, WBSettingsLifecycleInProgressKey)) {
+        if (WBOriginalSettingsViewWillAppear) {
+            WBOriginalSettingsViewWillAppear(object, selector, animated);
         }
         return;
     }
     objc_setAssociatedObject(object, WBSettingsLifecycleInProgressKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (WBOriginalSettingsLifecycle) {
-        WBOriginalSettingsLifecycle(object, selector);
+    if (WBOriginalSettingsViewWillAppear) {
+        WBOriginalSettingsViewWillAppear(object, selector, animated);
     }
+    WBSettingsLastLifecycleName = NSStringFromSelector(selector);
     WBAddSettingsEntry(object);
     WBRecordSettingsDiagnostics();
     objc_setAssociatedObject(object, WBSettingsLifecycleInProgressKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -365,29 +418,67 @@ static void WBSettingsLifecycleHook(id object, SEL selector) {
 
 + (void)installIfPossible {
     @synchronized(self) {
+        BOOL pluginsRegistrationSucceeded = WBRegisterWithPluginsManager();
         if (WBSettingsHookInstalled) {
             return;
         }
         Class settingsClass = NSClassFromString(@"NewSettingViewController");
         SEL openSelector = NSSelectorFromString(@"wb_openBubbleSettings");
         SEL reloadSelector = NSSelectorFromString(@"reloadTableData");
+        SEL willAppearSelector = NSSelectorFromString(@"willAppear");
+        SEL viewWillAppearSelector = @selector(viewWillAppear:);
         SEL viewDidLoadSelector = @selector(viewDidLoad);
         Method reloadMethod = settingsClass ? class_getInstanceMethod(settingsClass, reloadSelector) : NULL;
-        SEL lifecycleSelector = WBNoArgumentVoidMethodMatches(reloadMethod) ? reloadSelector : viewDidLoadSelector;
-        Method lifecycleMethod = settingsClass ? class_getInstanceMethod(settingsClass, lifecycleSelector) : NULL;
-        if (!settingsClass || !WBNoArgumentVoidMethodMatches(lifecycleMethod)) {
-            WBSettingsEntryReason = @"lifecycle-unavailable";
+        Method willAppearMethod = settingsClass ? class_getInstanceMethod(settingsClass, willAppearSelector) : NULL;
+        Method viewWillAppearMethod = settingsClass ? class_getInstanceMethod(settingsClass, viewWillAppearSelector) : NULL;
+        Method viewDidLoadMethod = settingsClass ? class_getInstanceMethod(settingsClass, viewDidLoadSelector) : NULL;
+        BOOL reloadAvailable = WBNoArgumentVoidMethodMatches(reloadMethod);
+        BOOL willAppearAvailable = WBNoArgumentVoidMethodMatches(willAppearMethod);
+        BOOL viewWillAppearAvailable = WBBooleanArgumentVoidMethodMatches(viewWillAppearMethod);
+        BOOL viewDidLoadAvailable = WBNoArgumentVoidMethodMatches(viewDidLoadMethod);
+        if (!settingsClass || (!reloadAvailable && !willAppearAvailable && !viewWillAppearAvailable && !viewDidLoadAvailable)) {
+            if (!pluginsRegistrationSucceeded) {
+                WBSettingsEntryReason = @"lifecycle-unavailable";
+            }
             return;
         }
         if (![settingsClass instancesRespondToSelector:openSelector] && !class_addMethod(settingsClass, openSelector, (IMP)WBOpenBubbleSettings, "v@:")) {
-            WBSettingsEntryReason = @"open-selector-install-failed";
+            if (!pluginsRegistrationSucceeded) {
+                WBSettingsEntryReason = @"open-selector-install-failed";
+            }
             return;
         }
-        WBSettingsHookUsesReloadTableData = lifecycleSelector == reloadSelector;
-        WBSettingsLifecycleName = NSStringFromSelector(lifecycleSelector);
-        MSHookMessageEx(settingsClass, lifecycleSelector, (IMP)WBSettingsLifecycleHook, (IMP *)&WBOriginalSettingsLifecycle);
-        WBSettingsHookInstalled = WBOriginalSettingsLifecycle != NULL;
-        WBSettingsEntryReason = WBSettingsHookInstalled ? @"waiting-for-settings-screen" : @"hook-install-failed";
+        NSMutableArray<NSString *> *hookedSelectors = [NSMutableArray arrayWithCapacity:3];
+        if (reloadAvailable) {
+            MSHookMessageEx(settingsClass, reloadSelector, (IMP)WBSettingsLifecycleHook, (IMP *)&WBOriginalSettingsReload);
+            if (WBOriginalSettingsReload) {
+                [hookedSelectors addObject:NSStringFromSelector(reloadSelector)];
+            }
+        }
+        if (willAppearAvailable) {
+            MSHookMessageEx(settingsClass, willAppearSelector, (IMP)WBSettingsLifecycleHook, (IMP *)&WBOriginalSettingsWillAppear);
+            if (WBOriginalSettingsWillAppear) {
+                [hookedSelectors addObject:NSStringFromSelector(willAppearSelector)];
+            }
+        }
+        if (viewWillAppearAvailable) {
+            MSHookMessageEx(settingsClass, viewWillAppearSelector, (IMP)WBSettingsViewWillAppearHook, (IMP *)&WBOriginalSettingsViewWillAppear);
+            if (WBOriginalSettingsViewWillAppear) {
+                [hookedSelectors addObject:NSStringFromSelector(viewWillAppearSelector)];
+            }
+        }
+        if (hookedSelectors.count == 0 && viewDidLoadAvailable) {
+            MSHookMessageEx(settingsClass, viewDidLoadSelector, (IMP)WBSettingsLifecycleHook, (IMP *)&WBOriginalSettingsViewDidLoad);
+            if (WBOriginalSettingsViewDidLoad) {
+                [hookedSelectors addObject:NSStringFromSelector(viewDidLoadSelector)];
+            }
+        }
+        WBSettingsHookUsesReloadTableData = WBOriginalSettingsReload != NULL || WBOriginalSettingsWillAppear != NULL || WBOriginalSettingsViewWillAppear != NULL;
+        WBSettingsLifecycleName = hookedSelectors.count > 0 ? [hookedSelectors componentsJoinedByString:@","] : @"unavailable";
+        WBSettingsHookInstalled = hookedSelectors.count > 0;
+        if (!pluginsRegistrationSucceeded) {
+            WBSettingsEntryReason = WBSettingsHookInstalled ? @"waiting-for-settings-screen" : @"hook-install-failed";
+        }
     }
 }
 
