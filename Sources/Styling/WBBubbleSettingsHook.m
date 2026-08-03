@@ -203,7 +203,6 @@ static void WBSettingsLifecycleHook(id object, SEL selector) {
         SEL reloadSelector = NSSelectorFromString(@"reloadTableData");
         SEL viewDidLoadSelector = @selector(viewDidLoad);
         Method reloadMethod = settingsClass ? class_getInstanceMethod(settingsClass, reloadSelector) : NULL;
-        Method viewDidLoadMethod = settingsClass ? class_getInstanceMethod(settingsClass, viewDidLoadSelector) : NULL;
         SEL lifecycleSelector = WBNoArgumentVoidMethodMatches(reloadMethod) ? reloadSelector : viewDidLoadSelector;
         Method lifecycleMethod = settingsClass ? class_getInstanceMethod(settingsClass, lifecycleSelector) : NULL;
         if (!settingsClass || !WBNoArgumentVoidMethodMatches(lifecycleMethod)) {
