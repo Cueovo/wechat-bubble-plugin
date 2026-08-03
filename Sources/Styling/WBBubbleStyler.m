@@ -1,5 +1,5 @@
 #import "WBBubbleStyler.h"
-#import "WBSDFDisplacementRenderer.h"
+#import "WBExplicitRefractionRenderer.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -114,7 +114,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
 @property (nonatomic, strong) CAShapeLayer *shadeMaskLayer;
 @property (nonatomic, strong) CAShapeLayer *borderLayer;
 @property (nonatomic, strong) CAShapeLayer *maskLayer;
-@property (nonatomic, strong) WBSDFDisplacementRenderer *sdfRenderer;
+@property (nonatomic, strong) WBExplicitRefractionRenderer *explicitRenderer;
 @property (nonatomic, copy, nullable) NSString *effectSignature;
 @property (nonatomic, assign) WBBubbleDirection direction;
 @property (nonatomic, assign) WBBubbleTailSide tailSide;
@@ -171,7 +171,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         _maskLayer = [CAShapeLayer layer];
         [_maskLayer setContentsScale:UIScreen.mainScreen.scale];
         _maskLayer.fillColor = UIColor.blackColor.CGColor;
-        _sdfRenderer = [WBSDFDisplacementRenderer new];
+        _explicitRenderer = [WBExplicitRefractionRenderer new];
     }
     return self;
 }
@@ -184,7 +184,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
     }
     if ([backend isEqualToString:@"native-uiglass-effect"]) {
         @try {
-            [self.sdfRenderer reset];
+            [self.explicitRenderer reset];
             id effect = [[NSClassFromString(@"UIGlassEffect") alloc] init];
             SEL tintSelector = NSSelectorFromString(@"setTintColor:");
             SEL interactiveSelector = NSSelectorFromString(@"setInteractive:");
@@ -204,7 +204,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         [self updateGlassEffectForDarkAppearance:dark];
         return;
     }
-    if ([backend isEqualToString:@"compatibility-sdf-displacement"]) {
+    if ([backend isEqualToString:@"compatibility-explicit-refraction"]) {
         self.effectView.transform = CGAffineTransformIdentity;
         self.effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
         self.tintView.hidden = YES;
@@ -212,7 +212,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         self.effectSignature = signature;
         return;
     }
-    [self.sdfRenderer reset];
+    [self.explicitRenderer reset];
     self.effectView.transform = CGAffineTransformMakeScale(1.045, 1.08);
     self.effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
     self.tintView.hidden = YES;
@@ -230,30 +230,26 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
     UIColor *fillColor = [WBBubbleThemeProvider fillColorForDirection:self.direction traitCollection:traits];
     BOOL usesGlass = [WBBubbleThemeProvider usesGlassMaterial];
     NSString *backend = [WBBubbleThemeProvider resolvedMaterialBackend];
-    BOOL sdfGlass = NO;
+    BOOL explicitGlass = NO;
     self.effectView.frame = localBounds;
     self.effectView.hidden = !usesGlass;
     if (usesGlass) {
         [self updateGlassEffectForDarkAppearance:dark];
         backend = [WBBubbleThemeProvider resolvedMaterialBackend];
-        sdfGlass = [backend isEqualToString:@"compatibility-sdf-displacement"];
-        if (sdfGlass) {
-            NSString *cacheKey = [NSString stringWithFormat:@"%ld-%ld-%.2f", (long)self.tailSide, (long)self.segmentPosition, [WBBubbleThemeProvider cornerRadius]];
-            WBSDFApplicationResult result = [self.sdfRenderer applyToEffectView:self.effectView path:path bounds:localBounds cacheKey:cacheKey];
-            if (result == WBSDFApplicationResultFailed) {
-                self.effectSignature = nil;
-                backend = [WBBubbleThemeProvider resolvedMaterialBackend];
-                sdfGlass = NO;
-                [self updateGlassEffectForDarkAppearance:dark];
+        explicitGlass = [backend isEqualToString:@"compatibility-explicit-refraction"];
+        if (explicitGlass) {
+            WBExplicitRefractionResult result = [self.explicitRenderer applyToView:self path:path bounds:localBounds];
+            if (result == WBExplicitRefractionResultApplied) {
+                self.effectView.effect = nil;
             }
         }
     } else {
-        [self.sdfRenderer reset];
+        [self.explicitRenderer reset];
         self.effectView.transform = CGAffineTransformIdentity;
         self.effectView.effect = nil;
         self.effectSignature = nil;
     }
-    BOOL compatibilityGlass = usesGlass && ([backend isEqualToString:@"compatibility-colorless-lens"] || sdfGlass);
+    BOOL compatibilityGlass = usesGlass && ([backend isEqualToString:@"compatibility-colorless-lens"] || explicitGlass);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     self.shapeLayer.frame = localBounds;
@@ -385,7 +381,7 @@ static char WBInternalArtworkUpdateKey;
     WBBubbleOverlayView *overlayView = state.overlayView;
     NSString *themeIdentifier = [WBBubbleThemeProvider themeIdentifier];
     BOOL needsOverlayLayout = !CGRectEqualToRect(overlayView.frame, bubbleView.bounds) || overlayView.direction != direction || overlayView.tailSide != tailSide || overlayView.segmentPosition != segmentPosition || ![state.themeIdentifier isEqualToString:themeIdentifier];
-    if ([themeIdentifier containsString:@"compatibility-sdf-displacement"] && [overlayView.sdfRenderer requiresFilterReapplication]) {
+    if ([themeIdentifier containsString:@"compatibility-explicit-refraction"]) {
         needsOverlayLayout = YES;
     }
     if ([bubbleView isKindOfClass:UIImageView.class]) {

@@ -15,7 +15,7 @@ typedef NS_ENUM(NSInteger, WBBubbleDirection) {
 + (BOOL)usesGlassMaterial;
 + (BOOL)nativeLiquidGlassAvailable;
 + (void)disableNativeLiquidGlassForProcess;
-+ (BOOL)sdfDisplacementAvailable;
++ (BOOL)explicitRefractionAvailable;
 + (NSDictionary<NSString *, id> *)glassCapabilitySnapshot;
 + (NSString *)materialIdentifier;
 + (NSString *)resolvedMaterialBackend;

@@ -401,7 +401,7 @@ static void WBSetAnimatedImageHook(id object, SEL selector, id image) {
 + (NSDictionary<NSString *, id> *)configurationSnapshot {
     Class cellClass = NSClassFromString(@"CommonMessageCellView");
     return @{
-        @"mode": @"user-configurable-sdf-glass",
+        @"mode": @"user-configurable-explicit-refraction-glass",
         @"themeIdentifier": [WBBubbleThemeProvider themeIdentifier],
         @"artworkHooksInstalled": @(WBArtworkHooksInstalled),
         @"requestedMaterial": [WBBubbleThemeProvider materialIdentifier],

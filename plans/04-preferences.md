@@ -118,6 +118,21 @@
 2. 确认 `mapPixelWidth/backdropWidth` 与 `mapPixelHeight/backdropHeight` 的比值均约等于 `mapScale`。
 3. 在月面纹理等高频背景上检查气泡边缘弯曲；若仍无位移，则停止继续猜测 `CAFilter` 贴图语义，转入显式 backdrop 捕获与 Metal/Core Image 自定义采样路线。
 
+## 0.6.5 显式背景捕获与 Core Image 折射
+
+- 0.6.4 真机诊断确认 `inputOffset` 已成功设置和读回、`inputAmount=20`、map/backdrop 逻辑尺寸一致、3× 像素比例一致、滤镜链只含 `displacementMap` 且无运行时错误，但画面仍只有透明效果；因此该私有滤镜在当前 iOS 16.5 目标环境中判定为操作上无效，不再继续猜测其贴图语义。
+- 兼容后端改为 `compatibility-explicit-refraction`：在主线程只捕获气泡周围带 24pt 采样边距的窗口区域，捕获时临时排除当前 `CommonMessageCellView`，避免把气泡文字和覆盖层递归采回纹理。
+- 捕获结果交给公开 `CIWarpKernel`，根据圆角矩形 signed-distance 边缘法线和 circle profile 将采样坐标向外偏移；气泡原有路径遮罩继续负责左右尾巴和多段轮廓裁切，高光与内阴影层保持不变。
+- 滚动期间按窗口坐标变化进行 60ms debounce，只在位置稳定后刷新局部纹理；内核不可用、捕获失败或输出失败时保留超薄无色材质作为安全回退。
+- 诊断格式升级到 18，新增 `glassCapabilities.explicitRefraction` 和 `styling.explicitRefractionRuntime`，记录捕获次数、失败原因、捕获/warp 耗时、scale 及输入输出像素尺寸。
+
+### 0.6.5 真机复测
+
+1. 在高对比月面、树枝或文字背景上停住滚动，确认气泡边缘附近出现明确的局部弯曲，中心背景基本保持原位置，且不再只是透明。
+2. 导出格式 18 诊断，确认 `resolvedMaterialBackend=compatibility-explicit-refraction`、`explicitRefractionRuntime.applicationSucceeded=true`、`captureCount>0`、`lastFailure=none`，输入宽高应分别比输出宽高多约 `48×captureScale` 像素。
+3. 快速连续滚动后停住，确认折射纹理会更新到当前位置，不出现旧消息文字、头像或气泡自身的递归残影；比较 `captureMilliseconds` 与 `warpMilliseconds` 并观察是否有明显掉帧。
+4. 覆盖收发方向、单段和连续消息分段、浅色/深色、切换纯色与关闭插件；捕获失败时气泡仍应显示透明兼容材质而不是消失或崩溃。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。

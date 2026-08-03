@@ -1,6 +1,6 @@
 #import "WBBubbleThemeProvider.h"
 #import "WBBubblePreferences.h"
-#import "WBSDFDisplacementRenderer.h"
+#import "WBExplicitRefractionRenderer.h"
 #import <objc/message.h>
 #import <objc/runtime.h>
 
@@ -67,8 +67,8 @@ static NSString *WBNativeGlassReason = @"not-probed";
     }
 }
 
-+ (BOOL)sdfDisplacementAvailable {
-    return [WBSDFDisplacementRenderer isAvailable];
++ (BOOL)explicitRefractionAvailable {
+    return [WBExplicitRefractionRenderer isAvailable];
 }
 
 + (NSDictionary<NSString *, id> *)glassCapabilitySnapshot {
@@ -80,7 +80,7 @@ static NSString *WBNativeGlassReason = @"not-probed";
     return @{
         @"nativeLiquidGlassAvailable": @(nativeAvailable),
         @"nativeLiquidGlassReason": nativeReason,
-        @"sdfDisplacement": [WBSDFDisplacementRenderer capabilitySnapshot]
+        @"explicitRefraction": [WBExplicitRefractionRenderer capabilitySnapshot]
     };
 }
 
@@ -95,11 +95,11 @@ static NSString *WBNativeGlassReason = @"not-probed";
     if ([self nativeLiquidGlassAvailable]) {
         return @"native-uiglass-effect";
     }
-    return [self sdfDisplacementAvailable] ? @"compatibility-sdf-displacement" : @"compatibility-colorless-lens";
+    return [self explicitRefractionAvailable] ? @"compatibility-explicit-refraction" : @"compatibility-colorless-lens";
 }
 
 + (NSString *)themeIdentifier {
-    return [NSString stringWithFormat:@"stage05-material-v7-%@", [self resolvedMaterialBackend]];
+    return [NSString stringWithFormat:@"stage05-material-v8-%@", [self resolvedMaterialBackend]];
 }
 
 + (UIColor *)fillColorForDirection:(WBBubbleDirection)direction traitCollection:(UITraitCollection *)traitCollection {
