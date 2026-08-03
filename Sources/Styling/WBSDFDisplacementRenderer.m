@@ -1,4 +1,5 @@
 #import "WBSDFDisplacementRenderer.h"
+#import "../Discovery/WBDiagnostics.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <math.h>
@@ -7,8 +8,13 @@ static BOOL WBSDFCapabilityProbed;
 static BOOL WBSDFCapabilityAvailable;
 static BOOL WBSDFDisabledForProcess;
 static NSString *WBSDFProbeReason = @"not-probed";
+static NSArray<NSString *> *WBSDFReportedInputKeys;
 static NSString *WBSDFLastRuntimeFailure = @"none";
 static NSUInteger WBSDFRuntimeFailureCount;
+static BOOL WBSDFRuntimeApplicationSucceeded;
+static BOOL WBSDFRuntimeSnapshotScheduled;
+static NSUInteger WBSDFRuntimeSnapshotGeneration;
+static NSUInteger WBSDFRuntimeSnapshotRetryCount;
 
 static id WBSDFCreateFilter(NSString *type) {
     Class filterClass = NSClassFromString(@"CAFilter");
@@ -23,19 +29,6 @@ static NSArray<NSString *> *WBSDFInputKeys(id filter) {
     SEL selector = NSSelectorFromString(@"inputKeys");
     id keys = [filter respondsToSelector:selector] ? ((id (*)(id, SEL))objc_msgSend)(filter, selector) : nil;
     return [keys isKindOfClass:NSArray.class] ? keys : nil;
-}
-
-static BOOL WBSDFFilterSupportsKeys(id filter, NSArray<NSString *> *requiredKeys) {
-    NSArray<NSString *> *keys = WBSDFInputKeys(filter);
-    if (!keys) {
-        return NO;
-    }
-    for (NSString *key in requiredKeys) {
-        if (![keys containsObject:key]) {
-            return NO;
-        }
-    }
-    return YES;
 }
 
 static void WBSDFProbeCapability(void) {
@@ -54,16 +47,58 @@ static void WBSDFProbeCapability(void) {
                 WBSDFProbeReason = @"displacement-filter-unavailable";
                 return;
             }
-            if (!WBSDFFilterSupportsKeys(displacement, @[@"inputMaskImage", @"inputAmount"])) {
-                WBSDFProbeReason = @"displacement-inputs-unavailable";
-                return;
-            }
+            WBSDFReportedInputKeys = [WBSDFInputKeys(displacement) copy] ?: @[];
             WBSDFCapabilityAvailable = YES;
             WBSDFProbeReason = @"available";
         } @catch (__unused NSException *exception) {
             WBSDFProbeReason = @"capability-probe-exception";
         }
     }
+}
+
+static void WBSDFScheduleRuntimeSnapshot(void) {
+    NSDictionary<NSString *, id> *runtime;
+    NSUInteger scheduledGeneration;
+    @synchronized(WBSDFDisplacementRenderer.class) {
+        WBSDFRuntimeSnapshotGeneration++;
+        if (WBSDFRuntimeSnapshotScheduled) {
+            return;
+        }
+        WBSDFRuntimeSnapshotScheduled = YES;
+        scheduledGeneration = WBSDFRuntimeSnapshotGeneration;
+        runtime = @{
+            @"applicationSucceeded": @(WBSDFRuntimeApplicationSucceeded),
+            @"disabledForProcess": @(WBSDFDisabledForProcess),
+            @"lastRuntimeFailure": WBSDFLastRuntimeFailure,
+            @"runtimeFailureCount": @(WBSDFRuntimeFailureCount),
+            @"updatedAt": NSDate.date
+        };
+    }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        BOOL updated = [WBDiagnostics updateStyling:@{@"sdfRuntime": runtime} error:nil];
+        BOOL needsUpdate;
+        BOOL shouldRetry;
+        NSUInteger retryCount;
+        @synchronized(WBSDFDisplacementRenderer.class) {
+            WBSDFRuntimeSnapshotScheduled = NO;
+            needsUpdate = updated && WBSDFRuntimeSnapshotGeneration != scheduledGeneration;
+            shouldRetry = NO;
+            if (updated) {
+                WBSDFRuntimeSnapshotRetryCount = 0;
+            } else if (WBSDFRuntimeSnapshotRetryCount < 4) {
+                WBSDFRuntimeSnapshotRetryCount++;
+                shouldRetry = YES;
+            }
+            retryCount = WBSDFRuntimeSnapshotRetryCount;
+        }
+        if (needsUpdate) {
+            WBSDFScheduleRuntimeSnapshot();
+        } else if (shouldRetry) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(retryCount * 0.5 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                WBSDFScheduleRuntimeSnapshot();
+            });
+        }
+    });
 }
 
 static void WBSDFRecordRuntimeFailure(NSString *reason, BOOL disableForProcess) {
@@ -74,6 +109,17 @@ static void WBSDFRecordRuntimeFailure(NSString *reason, BOOL disableForProcess) 
             WBSDFDisabledForProcess = YES;
         }
     }
+    WBSDFScheduleRuntimeSnapshot();
+}
+
+static void WBSDFRecordRuntimeSuccess(void) {
+    @synchronized(WBSDFDisplacementRenderer.class) {
+        if (WBSDFRuntimeApplicationSucceeded) {
+            return;
+        }
+        WBSDFRuntimeApplicationSucceeded = YES;
+    }
+    WBSDFScheduleRuntimeSnapshot();
 }
 
 static NSCache<NSString *, UIImage *> *WBSDFImageCache(void) {
@@ -332,6 +378,9 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             @"available": @(available),
             @"capabilityProbed": @(WBSDFCapabilityProbed),
             @"probeReason": WBSDFProbeReason,
+            @"reportedInputKeys": WBSDFReportedInputKeys ?: @[],
+            @"inputValidationMode": @"guarded-kvc-runtime",
+            @"applicationSucceeded": @(WBSDFRuntimeApplicationSucceeded),
             @"disabledForProcess": @(WBSDFDisabledForProcess),
             @"lastRuntimeFailure": WBSDFLastRuntimeFailure,
             @"runtimeFailureCount": @(WBSDFRuntimeFailureCount)
@@ -400,17 +449,22 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
     if (self.backdropLayer && self.backdropLayer != backdropLayer) {
         [self reset];
     }
+    NSString *applicationStep = @"read-backdrop-filters";
     @try {
         id currentFilters = [backdropLayer valueForKey:@"filters"];
         if (self.backdropLayer == backdropLayer && [self.installedImageCacheKey isEqualToString:imageCacheKey] && self.installedFilters && [currentFilters isEqual:self.installedFilters]) {
+            WBSDFRecordRuntimeSuccess();
             return WBSDFApplicationResultApplied;
         }
+        applicationStep = @"create-displacement-filter";
         id displacement = WBSDFCreateFilter(@"displacementMap");
-        if (!displacement || !WBSDFFilterSupportsKeys(displacement, @[@"inputMaskImage", @"inputAmount"])) {
+        if (!displacement) {
             WBSDFRecordRuntimeFailure(@"displacement-filter-creation-failed", YES);
             return WBSDFApplicationResultFailed;
         }
+        applicationStep = @"set-input-mask-image";
         [displacement setValue:(__bridge id)image.CGImage forKey:@"inputMaskImage"];
+        applicationStep = @"set-input-amount";
         [displacement setValue:@(11.0) forKey:@"inputAmount"];
         NSArray *baseFilters = self.originalFilters;
         if (self.backdropLayer != backdropLayer || !self.installedFilters || ![currentFilters isEqual:self.installedFilters]) {
@@ -428,6 +482,7 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         }
         NSMutableArray *filters = [NSMutableArray arrayWithObject:displacement];
         [filters addObjectsFromArray:baseFilters];
+        applicationStep = @"install-backdrop-filters";
         [backdropLayer setValue:filters forKey:@"filters"];
         @try {
             [backdropLayer setValue:@(UIScreen.mainScreen.scale) forKey:@"scale"];
@@ -437,10 +492,11 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         self.backdropLayer = backdropLayer;
         self.installedFilters = [filters copy];
         self.installedImageCacheKey = imageCacheKey;
+        WBSDFRecordRuntimeSuccess();
         return WBSDFApplicationResultApplied;
     } @catch (__unused NSException *exception) {
         [self reset];
-        WBSDFRecordRuntimeFailure(@"filter-application-exception", YES);
+        WBSDFRecordRuntimeFailure([NSString stringWithFormat:@"filter-application-exception-%@", applicationStep], YES);
         return WBSDFApplicationResultFailed;
     }
 }

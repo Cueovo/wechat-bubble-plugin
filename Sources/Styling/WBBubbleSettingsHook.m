@@ -232,7 +232,7 @@ static BOOL WBRegisterWithPluginsManager(void) {
     }
     WBSettingsPluginsManagerAvailable = YES;
     @try {
-        ((void (*)(id, SEL, id, id, id))objc_msgSend)(manager, registerSelector, @"聊天气泡", @"0.6.0", NSStringFromClass(WBBubbleSettingsViewController.class));
+        ((void (*)(id, SEL, id, id, id))objc_msgSend)(manager, registerSelector, @"聊天气泡", @"0.6.1", NSStringFromClass(WBBubbleSettingsViewController.class));
     } @catch (__unused NSException *exception) {
         WBSettingsPluginsManagerAvailable = NO;
         return NO;

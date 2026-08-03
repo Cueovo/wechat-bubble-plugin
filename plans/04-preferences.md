@@ -67,6 +67,18 @@
 5. 切换纯色、关闭插件并重新开启，确认 backdrop filters 被移除、微信原始素材恢复、再次进入玻璃后折射可重建。
 6. 模拟私有滤镜不可用或应用异常，确认只回退基础兼容后端，不导致微信启动崩溃或气泡消失。
 
+## 0.6.1 真机输入探测修正
+
+- 0.6.0 真机诊断确认 `displacementMap` 可以创建，但 iOS 16.5 的 `inputKeys` 未完整列出已知的 `inputMaskImage` 和 `inputAmount`，导致后端在实际 KVC 应用前被错误回退。
+- `inputKeys` 改为只记录到 `reportedInputKeys`，不再作为硬门控；渲染时在异常保护内依次写入位移图和强度，实际 KVC 或 backdrop 安装失败才在当前进程回退。
+- 诊断格式升级到 14，新增 `inputValidationMode=guarded-kvc-runtime`；`lastRuntimeFailure` 会精确标记失败步骤，例如 `set-input-mask-image`、`set-input-amount` 或 `install-backdrop-filters`。首次实际应用或失败后会异步写入 `styling.sdfRuntime`，避免启动快照早于聊天渲染而遗漏结果。
+
+### 0.6.1 真机复测
+
+1. 冷启动后先确认 `resolvedMaterialBackend=compatibility-sdf-displacement`、`probeReason=available`，并记录 `reportedInputKeys`。
+2. 打开有可见聊天背景的文字会话并等待首批异步 SDF 生成；重新导出诊断，确认 `disabledForProcess=false`、`lastRuntimeFailure=none`。
+3. 若再次回退基础兼容，提供格式 14 诊断；精确失败步骤将决定是否需要替换键名、图像值类型或 backdrop filter 安装方式。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。

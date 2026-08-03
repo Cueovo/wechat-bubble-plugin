@@ -51,6 +51,10 @@
     return [self updateSection:@"discovery" entries:update error:error];
 }
 
++ (BOOL)updateStyling:(NSDictionary<NSString *, id> *)update error:(NSError **)error {
+    return [self updateSection:@"styling" entries:update error:error];
+}
+
 + (BOOL)updateSettings:(NSDictionary<NSString *, id> *)update error:(NSError **)error {
     return [self updateSection:@"settings" entries:update error:error];
 }

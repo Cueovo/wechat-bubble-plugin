@@ -11,7 +11,7 @@
 #import "Styling/WBBubblePreferences.h"
 #import "Styling/WBBubbleSettingsHook.h"
 
-NSString * const WeChatBubbleBuildStage = @"sdf-displacement-glass";
+NSString * const WeChatBubbleBuildStage = @"sdf-displacement-runtime-probe";
 
 static BOOL WBStyleHookInstalled;
 static BOOL WBStableLaunchConfirmationScheduled;
@@ -42,8 +42,8 @@ static void WBRunBootstrap(BOOL hookInstalled) {
         styling[@"reason"] = @"required-runtime-capability-missing";
     }
     NSDictionary<NSString *, id> *snapshot = @{
-        @"diagnosticsFormat": @13,
-        @"pluginVersion": @"0.6.0",
+        @"diagnosticsFormat": @14,
+        @"pluginVersion": @"0.6.1",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],
