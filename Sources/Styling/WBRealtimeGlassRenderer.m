@@ -32,28 +32,40 @@ static NSArray<NSDictionary *> *WBRealtimeLastSurfaceFrames = @[];
 static NSString *WBRealtimeCaptureSourceClass = @"window";
 static NSString *WBRealtimeCaptureSourceFrame = @"unknown";
 static NSString *WBRealtimeCapturePolicy = @"isolated-wallpaper-capture-once-live-window-uv";
+static NSUInteger WBRealtimeDisplayLinkWakeCount;
+static NSUInteger WBRealtimeDisplayLinkPauseCount;
+static NSUInteger WBRealtimeStableFrameCount;
+static BOOL WBRealtimeDisplayLinkActive;
+static NSUInteger WBRealtimeSDFCacheHitCount;
+static NSUInteger WBRealtimeSDFCacheMissCount;
+static NSUInteger WBRealtimeSDFGenerationFailureCount;
+static double WBRealtimeLastSDFGenerationMilliseconds;
+static NSUInteger WBRealtimeLastSDFWidth;
+static NSUInteger WBRealtimeLastSDFHeight;
+static NSString *WBRealtimeLastSDFFallback = @"none";
+static void *WBRealtimeScrollObservationContext = &WBRealtimeScrollObservationContext;
 
 static id<MTLDevice> WBRealtimeDevice;
 static id<MTLRenderPipelineState> WBRealtimePipeline;
+static id<MTLTexture> WBRealtimeFallbackSDFTexture;
 
 static NSString *WBRealtimeShaderSource(void) {
     return @"#include <metal_stdlib>\n"
     @"using namespace metal;\n"
     @"struct VertexOut { float4 position [[position]]; float2 uv; };\n"
-    @"struct GlassUniforms { float2 windowSize; float2 glassOrigin; float2 glassSize; float cornerRadius; float edgeWidth; float refraction; float dispersion; float zoom; float tint; float dark; float time; float textureYFlip; };\n"
+    @"struct GlassUniforms { float2 windowSize; float2 glassOrigin; float2 glassSize; float cornerRadius; float edgeWidth; float refraction; float dispersion; float zoom; float tint; float dark; float time; float textureYFlip; float2 sdfTexelSize; float sdfRange; float sdfEnabled; };\n"
     @"vertex VertexOut wbGlassVertex(uint id [[vertex_id]]) {\n"
     @"float2 positions[4] = {float2(-1,-1),float2(1,-1),float2(-1,1),float2(1,1)};\n"
     @"float2 uvs[4] = {float2(0,1),float2(1,1),float2(0,0),float2(1,0)};\n"
     @"VertexOut out; out.position=float4(positions[id],0,1); out.uv=uvs[id]; return out; }\n"
     @"float wbRoundedBox(float2 p,float2 halfSize,float radius) { float2 q=abs(p)-halfSize+radius; return min(max(q.x,q.y),0.0)+length(max(q,0.0))-radius; }\n"
-    @"fragment float4 wbGlassFragment(VertexOut in [[stage_in]], texture2d<float> backdrop [[texture(0)]], constant GlassUniforms &u [[buffer(0)]]) {\n"
+    @"fragment float4 wbGlassFragment(VertexOut in [[stage_in]], texture2d<float> backdrop [[texture(0)]], texture2d<float> pathSDF [[texture(1)]], constant GlassUniforms &u [[buffer(0)]]) {\n"
     @"constexpr sampler s(coord::normalized,address::clamp_to_edge,filter::linear);\n"
     @"float2 local=in.uv*u.glassSize; float2 halfSize=u.glassSize*0.5; float2 p=local-halfSize;\n"
-    @"float radius=min(u.cornerRadius,min(halfSize.x,halfSize.y)); float d=wbRoundedBox(p,halfSize,radius);\n"
-    @"float dx=wbRoundedBox(p+float2(0.75,0),halfSize,radius)-wbRoundedBox(p-float2(0.75,0),halfSize,radius);\n"
-    @"float dy=wbRoundedBox(p+float2(0,0.75),halfSize,radius)-wbRoundedBox(p-float2(0,0.75),halfSize,radius);\n"
-    @"float2 gradient=float2(dx,dy); float gradientLength=length(gradient); float2 normal=gradientLength>0.0001?gradient/gradientLength:float2(0.0); float depth=max(-d,0.0);\n"
-    @"float edge=1.0-smoothstep(0.0,max(u.edgeWidth,1.0),depth); edge=edge*edge*(3.0-2.0*edge);\n"
+    @"float radius=min(u.cornerRadius,min(halfSize.x,halfSize.y)); float d=wbRoundedBox(p,halfSize,radius); float2 normal=float2(0.0); float coverage=1.0;\n"
+    @"if(u.sdfEnabled>0.5){float c=pathSDF.sample(s,in.uv).r; d=(c-0.5)*(2.0*u.sdfRange); float l=pathSDF.sample(s,in.uv-float2(u.sdfTexelSize.x,0)).r; float r=pathSDF.sample(s,in.uv+float2(u.sdfTexelSize.x,0)).r; float t=pathSDF.sample(s,in.uv-float2(0,u.sdfTexelSize.y)).r; float b=pathSDF.sample(s,in.uv+float2(0,u.sdfTexelSize.y)).r; float2 gradient=float2(r-l,b-t); float gradientLength=length(gradient); normal=gradientLength>0.0001?gradient/gradientLength:float2(0.0); float antialias=max(fwidth(d),0.55); coverage=1.0-smoothstep(-antialias,antialias,d);}\n"
+    @"else{float epsilon=0.75; float dx=wbRoundedBox(p+float2(epsilon,0),halfSize,radius)-wbRoundedBox(p-float2(epsilon,0),halfSize,radius); float dy=wbRoundedBox(p+float2(0,epsilon),halfSize,radius)-wbRoundedBox(p-float2(0,epsilon),halfSize,radius); float2 gradient=float2(dx,dy); float gradientLength=length(gradient); normal=gradientLength>0.0001?gradient/gradientLength:float2(0.0);}\n"
+    @"float depth=max(-d,0.0); float edge=1.0-smoothstep(0.0,max(u.edgeWidth,1.0),depth); edge=edge*edge*(3.0-2.0*edge);\n"
     @"float2 normalized=p/max(halfSize,float2(1.0)); float center=clamp(1.0-dot(normalized,normalized),0.0,1.0);\n"
     @"float pulse=0.96+0.04*sin(u.time*1.35+normalized.y*2.4);\n"
     @"float2 lensOffset=normal*u.refraction*edge*pulse-normalized*center*u.zoom;\n"
@@ -64,7 +76,7 @@ static NSString *WBRealtimeShaderSource(void) {
     @"float3 tintTarget=u.dark>0.5?float3(0.10,0.13,0.17):float3(0.96,0.98,1.0); color=mix(color,tintTarget,u.tint*(u.dark>0.5?0.20:0.12));\n"
     @"float2 light=normalize(float2(-0.72,-0.69)); float facing=clamp(dot(normal,light)*0.5+0.5,0.0,1.0); float rim=edge*pow(facing,2.2); float opposite=edge*pow(1.0-facing,3.0);\n"
     @"color+=rim*(u.dark>0.5?0.34:0.46); color-=opposite*(0.08+0.08*(1.0-lum)); float inner=1.0-smoothstep(0.0,4.0,depth); color+=inner*0.06;\n"
-    @"return float4(saturate(color),0.985); }\n";
+    @"return float4(saturate(color),coverage); }\n";
 }
 
 static void WBRealtimeProbe(void) {
@@ -105,6 +117,16 @@ static void WBRealtimeProbe(void) {
             WBRealtimeProbeReason = [NSString stringWithFormat:@"pipeline-failed:%@", pipelineError.localizedDescription ?: @"unknown"];
             return;
         }
+        MTLTextureDescriptor *fallbackDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:1 height:1 mipmapped:NO];
+        fallbackDescriptor.usage = MTLTextureUsageShaderRead;
+        fallbackDescriptor.storageMode = MTLStorageModeShared;
+        WBRealtimeFallbackSDFTexture = [WBRealtimeDevice newTextureWithDescriptor:fallbackDescriptor];
+        if (!WBRealtimeFallbackSDFTexture) {
+            WBRealtimeProbeReason = @"fallback-sdf-texture-unavailable";
+            return;
+        }
+        uint8_t neutralDistance = 128;
+        [WBRealtimeFallbackSDFTexture replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:&neutralDistance bytesPerRow:1];
         WBRealtimeCapabilityAvailable = YES;
         WBRealtimeProbeReason = @"available";
     }
@@ -176,6 +198,178 @@ static UIView *WBRealtimeBackdropImageView(UIWindow *window) {
     return bestView;
 }
 
+@interface WBRealtimeSDFEntry : NSObject
+@property (nonatomic, strong) id<MTLTexture> texture;
+@property (nonatomic, assign) float range;
+@end
+
+@implementation WBRealtimeSDFEntry
+@end
+
+typedef struct {
+    uint64_t value;
+} WBRealtimePathHashContext;
+
+static void WBRealtimeHashBytes(WBRealtimePathHashContext *context, const void *bytes, size_t length) {
+    const uint8_t *cursor = bytes;
+    for (size_t index = 0; index < length; index++) {
+        context->value ^= cursor[index];
+        context->value *= 1099511628211ULL;
+    }
+}
+
+static void WBRealtimeHashPathElement(void *info, const CGPathElement *element) {
+    WBRealtimePathHashContext *context = info;
+    WBRealtimeHashBytes(context, &element->type, sizeof(element->type));
+    size_t pointCount = 0;
+    switch (element->type) {
+        case kCGPathElementMoveToPoint:
+        case kCGPathElementAddLineToPoint:
+            pointCount = 1;
+            break;
+        case kCGPathElementAddQuadCurveToPoint:
+            pointCount = 2;
+            break;
+        case kCGPathElementAddCurveToPoint:
+            pointCount = 3;
+            break;
+        case kCGPathElementCloseSubpath:
+            break;
+    }
+    WBRealtimeHashBytes(context, element->points, pointCount * sizeof(CGPoint));
+}
+
+static uint64_t WBRealtimePathHash(UIBezierPath *path, CGRect bounds) {
+    WBRealtimePathHashContext context = {1469598103934665603ULL};
+    WBRealtimeHashBytes(&context, &bounds, sizeof(bounds));
+    BOOL evenOdd = path.usesEvenOddFillRule;
+    WBRealtimeHashBytes(&context, &evenOdd, sizeof(evenOdd));
+    CGPathApply(path.CGPath, &context, WBRealtimeHashPathElement);
+    return context.value;
+}
+
+static void WBRealtimeDistanceTransform(const uint8_t *inside, NSUInteger width, NSUInteger height, BOOL featureInside, float *distance) {
+    const float infinity = 1000000.0f;
+    const float diagonal = 1.41421356f;
+    NSUInteger count = width * height;
+    for (NSUInteger index = 0; index < count; index++) {
+        distance[index] = ((inside[index] != 0) == featureInside) ? 0.0f : infinity;
+    }
+    for (NSUInteger y = 0; y < height; y++) {
+        for (NSUInteger x = 0; x < width; x++) {
+            NSUInteger index = y * width + x;
+            float value = distance[index];
+            if (x > 0) value = fminf(value, distance[index - 1] + 1.0f);
+            if (y > 0) value = fminf(value, distance[index - width] + 1.0f);
+            if (x > 0 && y > 0) value = fminf(value, distance[index - width - 1] + diagonal);
+            if (x + 1 < width && y > 0) value = fminf(value, distance[index - width + 1] + diagonal);
+            distance[index] = value;
+        }
+    }
+    for (NSInteger y = (NSInteger)height - 1; y >= 0; y--) {
+        for (NSInteger x = (NSInteger)width - 1; x >= 0; x--) {
+            NSUInteger index = (NSUInteger)y * width + (NSUInteger)x;
+            float value = distance[index];
+            if ((NSUInteger)x + 1 < width) value = fminf(value, distance[index + 1] + 1.0f);
+            if ((NSUInteger)y + 1 < height) value = fminf(value, distance[index + width] + 1.0f);
+            if ((NSUInteger)x + 1 < width && (NSUInteger)y + 1 < height) value = fminf(value, distance[index + width + 1] + diagonal);
+            if (x > 0 && (NSUInteger)y + 1 < height) value = fminf(value, distance[index + width - 1] + diagonal);
+            distance[index] = value;
+        }
+    }
+}
+
+static NSCache<NSString *, WBRealtimeSDFEntry *> *WBRealtimeSDFCache(void) {
+    static NSCache<NSString *, WBRealtimeSDFEntry *> *cache;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        cache = [NSCache new];
+        cache.countLimit = 96;
+        cache.totalCostLimit = 4 * 1024 * 1024;
+    });
+    return cache;
+}
+
+static WBRealtimeSDFEntry *WBRealtimeSDFEntryForPath(UIBezierPath *path, CGRect bounds, NSString **cacheKey) {
+    if (!path || CGRectIsEmpty(bounds) || !WBRealtimeDevice) {
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeSDFGenerationFailureCount++;
+            WBRealtimeLastSDFFallback = @"invalid-path-bounds-or-device";
+        }
+        return nil;
+    }
+    CGFloat maxSide = MAX(CGRectGetWidth(bounds), CGRectGetHeight(bounds));
+    NSUInteger longDimension = maxSide <= 72.0 ? 64 : (maxSide <= 160.0 ? 128 : 256);
+    NSUInteger width = MAX(24, (NSUInteger)llround(longDimension * CGRectGetWidth(bounds) / maxSide));
+    NSUInteger height = MAX(24, (NSUInteger)llround(longDimension * CGRectGetHeight(bounds) / maxSide));
+    uint64_t pathHash = WBRealtimePathHash(path, bounds);
+    NSString *key = [NSString stringWithFormat:@"%p-%016llx-%lux%lu", (__bridge void *)WBRealtimeDevice, (unsigned long long)pathHash, (unsigned long)width, (unsigned long)height];
+    if (cacheKey) {
+        *cacheKey = key;
+    }
+    WBRealtimeSDFEntry *cached = [WBRealtimeSDFCache() objectForKey:key];
+    if (cached) {
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeSDFCacheHitCount++;
+            WBRealtimeLastSDFFallback = @"none";
+            WBRealtimeLastSDFWidth = width;
+            WBRealtimeLastSDFHeight = height;
+        }
+        return cached;
+    }
+    CFTimeInterval started = CACurrentMediaTime();
+    NSUInteger count = width * height;
+    NSMutableData *insideData = [NSMutableData dataWithLength:count];
+    uint8_t *inside = insideData.mutableBytes;
+    for (NSUInteger y = 0; y < height; y++) {
+        CGFloat pointY = CGRectGetMinY(bounds) + ((CGFloat)y + 0.5) * CGRectGetHeight(bounds) / height;
+        for (NSUInteger x = 0; x < width; x++) {
+            CGFloat pointX = CGRectGetMinX(bounds) + ((CGFloat)x + 0.5) * CGRectGetWidth(bounds) / width;
+            inside[y * width + x] = CGPathContainsPoint(path.CGPath, NULL, CGPointMake(pointX, pointY), path.usesEvenOddFillRule) ? 1 : 0;
+        }
+    }
+    NSMutableData *insideDistanceData = [NSMutableData dataWithLength:count * sizeof(float)];
+    NSMutableData *outsideDistanceData = [NSMutableData dataWithLength:count * sizeof(float)];
+    float *distanceToInside = insideDistanceData.mutableBytes;
+    float *distanceToOutside = outsideDistanceData.mutableBytes;
+    WBRealtimeDistanceTransform(inside, width, height, YES, distanceToInside);
+    WBRealtimeDistanceTransform(inside, width, height, NO, distanceToOutside);
+    float pointsPerPixel = (float)MAX(CGRectGetWidth(bounds) / width, CGRectGetHeight(bounds) / height);
+    float range = (float)MIN(16.0, MAX(8.0, MIN(CGRectGetWidth(bounds), CGRectGetHeight(bounds)) * 0.22));
+    NSMutableData *encodedData = [NSMutableData dataWithLength:count];
+    uint8_t *encoded = encodedData.mutableBytes;
+    for (NSUInteger index = 0; index < count; index++) {
+        float signedDistance = inside[index] ? -distanceToOutside[index] * pointsPerPixel : distanceToInside[index] * pointsPerPixel;
+        float normalized = fmaxf(0.0f, fminf(1.0f, 0.5f + signedDistance / (2.0f * range)));
+        encoded[index] = (uint8_t)lrintf(normalized * 255.0f);
+    }
+    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:width height:height mipmapped:NO];
+    descriptor.usage = MTLTextureUsageShaderRead;
+    descriptor.storageMode = MTLStorageModeShared;
+    id<MTLTexture> texture = [WBRealtimeDevice newTextureWithDescriptor:descriptor];
+    if (!texture) {
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeSDFCacheMissCount++;
+            WBRealtimeSDFGenerationFailureCount++;
+            WBRealtimeLastSDFFallback = @"texture-create-failed";
+        }
+        return nil;
+    }
+    [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:0 withBytes:encoded bytesPerRow:width];
+    WBRealtimeSDFEntry *entry = [WBRealtimeSDFEntry new];
+    entry.texture = texture;
+    entry.range = range;
+    [WBRealtimeSDFCache() setObject:entry forKey:key cost:count];
+    @synchronized(WBRealtimeGlassRenderer.class) {
+        WBRealtimeSDFCacheMissCount++;
+        WBRealtimeLastSDFGenerationMilliseconds = (CACurrentMediaTime() - started) * 1000.0;
+        WBRealtimeLastSDFWidth = width;
+        WBRealtimeLastSDFHeight = height;
+        WBRealtimeLastSDFFallback = @"none";
+    }
+    return entry;
+}
+
 typedef struct {
     vector_float2 windowSize;
     vector_float2 glassOrigin;
@@ -189,6 +383,9 @@ typedef struct {
     float dark;
     float time;
     float textureYFlip;
+    vector_float2 sdfTexelSize;
+    float sdfRange;
+    float sdfEnabled;
 } WBRealtimeUniforms;
 
 @class WBRealtimeGlassManager;
@@ -209,6 +406,11 @@ typedef struct {
 @property (nonatomic, weak) WBRealtimeGlassManager *manager;
 @property (nonatomic, assign) CGRect requestedBounds;
 @property (nonatomic, assign) BOOL hasRenderedFrame;
+@property (nonatomic, strong) WBRealtimeSDFEntry *sdfEntry;
+@property (nonatomic, copy) NSString *sdfCacheKey;
+@property (nonatomic, assign) NSUInteger renderGeneration;
+@property (nonatomic, assign) UIUserInterfaceStyle renderedInterfaceStyle;
+- (void)setRenderedFrameAvailable:(BOOL)available;
 @end
 
 @interface WBRealtimeGlassManager : NSObject {
@@ -227,6 +429,13 @@ typedef struct {
     CGFloat _capturedScreenScale;
     CGAffineTransform _capturedWindowTransform;
     __weak UIScreen *_capturedScreen;
+    __weak UIScrollView *_contentScrollView;
+    BOOL _observingContentOffset;
+    BOOL _needsFrame;
+    BOOL _applicationActive;
+    NSUInteger _stableFrameCount;
+    CGPoint _lastContentOffset;
+    NSArray<NSValue *> *_lastVisibleFrames;
     CFTimeInterval _lastRegistrationTime;
 }
 @property (nonatomic, weak) UIWindow *window;
@@ -238,6 +447,8 @@ typedef struct {
 + (instancetype)managerForWindow:(UIWindow *)window;
 - (void)addRenderer:(WBRealtimeGlassRenderer *)renderer;
 - (void)removeRenderer:(WBRealtimeGlassRenderer *)renderer;
+- (void)rendererDidUpdate:(WBRealtimeGlassRenderer *)renderer;
+- (void)wakeDisplayLink;
 @end
 
 static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
@@ -268,7 +479,18 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"captureSourceClass": WBRealtimeCaptureSourceClass,
             @"captureSourceFrame": WBRealtimeCaptureSourceFrame,
             @"capturePolicy": WBRealtimeCapturePolicy,
-            @"samplingMode": @"isolated-wallpaper-or-window-backdrop-live-metal-uv-sdf",
+            @"displayLinkActive": @(WBRealtimeDisplayLinkActive),
+            @"displayLinkWakeCount": @(WBRealtimeDisplayLinkWakeCount),
+            @"displayLinkPauseCount": @(WBRealtimeDisplayLinkPauseCount),
+            @"stableFrameCount": @(WBRealtimeStableFrameCount),
+            @"sdfCacheHitCount": @(WBRealtimeSDFCacheHitCount),
+            @"sdfCacheMissCount": @(WBRealtimeSDFCacheMissCount),
+            @"sdfGenerationFailureCount": @(WBRealtimeSDFGenerationFailureCount),
+            @"sdfGenerationMilliseconds": @(WBRealtimeLastSDFGenerationMilliseconds),
+            @"sdfTextureWidth": @(WBRealtimeLastSDFWidth),
+            @"sdfTextureHeight": @(WBRealtimeLastSDFHeight),
+            @"sdfFallback": WBRealtimeLastSDFFallback,
+            @"samplingMode": @"isolated-wallpaper-live-uv-path-sdf-demand-metal",
             @"updatedAt": NSDate.date
         };
     }
@@ -303,14 +525,18 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         _commandQueue = [WBRealtimeDevice newCommandQueue];
         _frameSemaphore = dispatch_semaphore_create(1);
         _captureDirty = YES;
+        _needsFrame = YES;
+        _applicationActive = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
         _lastRegistrationTime = CACurrentMediaTime();
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationWillResignActive:) name:UIApplicationWillResignActiveNotification object:nil];
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, WBRealtimeDevice, nil, &_textureCache);
     }
     return self;
 }
 
 - (void)dealloc {
+    self.contentScrollView = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.displayLink invalidate];
     if (_cvTexture) {
@@ -324,12 +550,85 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     }
 }
 
+- (UIScrollView *)contentScrollView {
+    return _contentScrollView;
+}
+
+- (void)setContentScrollView:(UIScrollView *)contentScrollView {
+    if (_contentScrollView == contentScrollView) {
+        return;
+    }
+    if (_observingContentOffset && _contentScrollView) {
+        @try {
+            [_contentScrollView removeObserver:self forKeyPath:@"contentOffset" context:WBRealtimeScrollObservationContext];
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    _observingContentOffset = NO;
+    _contentScrollView = contentScrollView;
+    if (_contentScrollView) {
+        [_contentScrollView addObserver:self forKeyPath:@"contentOffset" options:NSKeyValueObservingOptionNew context:WBRealtimeScrollObservationContext];
+        _observingContentOffset = YES;
+        _lastContentOffset = _contentScrollView.contentOffset;
+    }
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(__unused NSDictionary *)change context:(void *)context {
+    if (context == WBRealtimeScrollObservationContext && object == _contentScrollView) {
+        CGPoint offset = _contentScrollView.contentOffset;
+        if (!CGPointEqualToPoint(offset, _lastContentOffset)) {
+            _lastContentOffset = offset;
+            [self wakeDisplayLink];
+        }
+        return;
+    }
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+}
+
+- (void)wakeDisplayLink {
+    _needsFrame = YES;
+    _stableFrameCount = 0;
+    BOOL activated = NO;
+    if (!self.displayLink && self.renderers.allObjects.count > 0) {
+        self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkDidFire:)];
+        self.displayLink.preferredFramesPerSecond = MIN(UIScreen.mainScreen.maximumFramesPerSecond, 60);
+        [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+        self.displayLink.paused = !_applicationActive;
+        activated = _applicationActive;
+    }
+    if (self.displayLink.paused && _applicationActive) {
+        self.displayLink.paused = NO;
+        activated = YES;
+    }
+    if (activated) {
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeDisplayLinkWakeCount++;
+            WBRealtimeDisplayLinkActive = YES;
+        }
+    }
+}
+
+- (void)rendererDidUpdate:(__unused WBRealtimeGlassRenderer *)renderer {
+    [self wakeDisplayLink];
+}
+
 - (void)applicationDidBecomeActive:(__unused NSNotification *)notification {
+    _applicationActive = YES;
     _backdropReady = NO;
     _captureDirty = YES;
     _orientationCalibrated = NO;
     _orientationFallbackUsed = NO;
     _lastRegistrationTime = CACurrentMediaTime();
+    [self wakeDisplayLink];
+}
+
+- (void)applicationWillResignActive:(__unused NSNotification *)notification {
+    _applicationActive = NO;
+    self.displayLink.paused = YES;
+    @synchronized(WBRealtimeGlassRenderer.class) {
+        WBRealtimeDisplayLinkPauseCount++;
+        WBRealtimeDisplayLinkActive = NO;
+    }
 }
 
 - (void)addRenderer:(WBRealtimeGlassRenderer *)renderer {
@@ -349,11 +648,7 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     if (firstRenderer || !_backdropReady) {
         _captureDirty = YES;
     }
-    if (!self.displayLink) {
-        self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkDidFire:)];
-        self.displayLink.preferredFramesPerSecond = MIN(UIScreen.mainScreen.maximumFramesPerSecond, 60);
-        [self.displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-    }
+    [self wakeDisplayLink];
 }
 
 - (void)removeRenderer:(WBRealtimeGlassRenderer *)renderer {
@@ -368,6 +663,11 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         _capturedWindowTransform = CGAffineTransformIdentity;
         _capturedScreen = nil;
         self.contentScrollView = nil;
+        _lastVisibleFrames = nil;
+        _stableFrameCount = 0;
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeDisplayLinkActive = NO;
+        }
     }
 }
 
@@ -571,23 +871,44 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
 }
 
 - (void)displayLinkDidFire:(__unused CADisplayLink *)displayLink {
-    NSArray<WBRealtimeGlassRenderer *> *registeredRenderers = self.renderers.allObjects;
+    NSArray<WBRealtimeGlassRenderer *> *registeredRenderers = [self.renderers.allObjects sortedArrayUsingComparator:^NSComparisonResult(WBRealtimeGlassRenderer *left, WBRealtimeGlassRenderer *right) {
+        uintptr_t leftAddress = (uintptr_t)(__bridge void *)left;
+        uintptr_t rightAddress = (uintptr_t)(__bridge void *)right;
+        return leftAddress < rightAddress ? NSOrderedAscending : (leftAddress > rightAddress ? NSOrderedDescending : NSOrderedSame);
+    }];
     if (registeredRenderers.count == 0 || !self.window || self.window.hidden) {
         return;
     }
+    if (!_applicationActive) {
+        return;
+    }
     NSMutableArray<WBRealtimeGlassRenderer *> *visibleRenderers = [NSMutableArray arrayWithCapacity:registeredRenderers.count];
+    NSMutableArray<NSValue *> *visibleFrames = [NSMutableArray arrayWithCapacity:registeredRenderers.count];
     for (WBRealtimeGlassRenderer *renderer in registeredRenderers) {
         UIView *target = renderer.targetView;
         if (target && target.window == self.window && !target.hidden && target.alpha >= 0.01 && !CGRectIsEmpty(renderer.requestedBounds)) {
             CGRect frame = [target convertRect:renderer.requestedBounds toView:self.window];
             if (CGRectIntersectsRect(frame, self.window.bounds)) {
                 [visibleRenderers addObject:renderer];
+                [visibleFrames addObject:[NSValue valueWithCGRect:frame]];
             }
         }
     }
     NSArray<WBRealtimeGlassRenderer *> *renderers = visibleRenderers;
     if (renderers.count == 0) {
+        self.displayLink.paused = YES;
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeDisplayLinkPauseCount++;
+            WBRealtimeDisplayLinkActive = NO;
+        }
         return;
+    }
+    BOOL geometryStable = _lastVisibleFrames && [_lastVisibleFrames isEqualToArray:visibleFrames] && !_needsFrame;
+    _lastVisibleFrames = [visibleFrames copy];
+    _stableFrameCount = geometryStable ? _stableFrameCount + 1 : 0;
+    _needsFrame = NO;
+    @synchronized(WBRealtimeGlassRenderer.class) {
+        WBRealtimeStableFrameCount = _stableFrameCount;
     }
     CGFloat currentScreenScale = self.window.screen.scale;
     BOOL captureCoordinatesChanged = !CGRectEqualToRect(_capturedWindowBounds, self.window.bounds) || fabs(_capturedScreenScale - currentScreenScale) > 0.001 || !CGAffineTransformEqualToTransform(_capturedWindowTransform, self.window.transform) || _capturedScreen != self.window.screen;
@@ -645,7 +966,9 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         return;
     }
     CFTimeInterval encodeStarted = CACurrentMediaTime();
-    __block NSUInteger encodedCount = 0;
+    NSUInteger encodedCount = 0;
+    NSMutableArray<WBRealtimeGlassRenderer *> *submittedRenderers = [NSMutableArray arrayWithCapacity:renderers.count];
+    NSMutableArray<NSNumber *> *submittedGenerations = [NSMutableArray arrayWithCapacity:renderers.count];
     for (WBRealtimeGlassRenderer *renderer in renderers) {
         UIView *target = renderer.targetView;
         WBRealtimeMetalView *metalView = renderer.metalView;
@@ -671,32 +994,51 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             continue;
         }
         CGRect windowBounds = self.window.bounds;
-        CGFloat radius = MIN([WBBubbleThemeProvider cornerRadius], MIN(CGRectGetWidth(renderer.requestedBounds), CGRectGetHeight(renderer.requestedBounds)) * 0.5);
+        CGFloat shortSide = MIN(CGRectGetWidth(renderer.requestedBounds), CGRectGetHeight(renderer.requestedBounds));
+        CGFloat radius = MIN([WBBubbleThemeProvider cornerRadius], shortSide * 0.5);
+        float edgeWidth = (float)MIN(10.0, MAX(5.5, shortSide * 0.16));
+        float refraction = (float)MIN(12.0, MAX(6.0, shortSide * 0.19));
+        float dispersion = MIN(1.8f, MAX(0.8f, refraction * 0.14f));
+        float zoom = (float)MIN(2.2, MAX(1.1, shortSide * 0.035));
+        WBRealtimeSDFEntry *sdfEntry = renderer.sdfEntry;
+        id<MTLTexture> sdfTexture = sdfEntry.texture ?: WBRealtimeFallbackSDFTexture;
         WBRealtimeUniforms uniforms = {
             .windowSize = {(float)CGRectGetWidth(windowBounds), (float)CGRectGetHeight(windowBounds)},
             .glassOrigin = {(float)(CGRectGetMinX(frameInWindow) - CGRectGetMinX(windowBounds)), (float)(CGRectGetMinY(frameInWindow) - CGRectGetMinY(windowBounds))},
             .glassSize = {(float)CGRectGetWidth(frameInWindow), (float)CGRectGetHeight(frameInWindow)},
             .cornerRadius = (float)radius,
-            .edgeWidth = 15.0f,
-            .refraction = 13.0f,
-            .dispersion = 1.6f,
-            .zoom = 2.2f,
+            .edgeWidth = edgeWidth,
+            .refraction = refraction,
+            .dispersion = dispersion,
+            .zoom = zoom,
             .tint = 0.32f,
             .dark = target.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark ? 1.0f : 0.0f,
             .time = (float)fmod(CACurrentMediaTime(), 1000.0),
-            .textureYFlip = _textureYFlipped ? 1.0f : 0.0f
+            .textureYFlip = _textureYFlipped ? 1.0f : 0.0f,
+            .sdfTexelSize = {1.0f / (float)sdfTexture.width, 1.0f / (float)sdfTexture.height},
+            .sdfRange = sdfEntry ? sdfEntry.range : 8.0f,
+            .sdfEnabled = sdfEntry ? 1.0f : 0.0f
         };
+        if (surfaceFrames) {
+            [surfaceFrames addObject:@{
+                @"frame": NSStringFromCGRect(frameInWindow),
+                @"edgeWidth": @(edgeWidth),
+                @"refraction": @(refraction),
+                @"dispersion": @(dispersion),
+                @"zoom": @(zoom),
+                @"sdfEnabled": @(sdfEntry != nil),
+                @"sdfCacheKey": renderer.sdfCacheKey ?: @"none"
+            }];
+        }
         [encoder setRenderPipelineState:WBRealtimePipeline];
         [encoder setFragmentTexture:backdrop atIndex:0];
+        [encoder setFragmentTexture:sdfTexture atIndex:1];
         [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:0];
         [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
         [encoder endEncoding];
         [commandBuffer presentDrawable:drawable];
-        BOOL firstFrame = !renderer.hasRenderedFrame;
-        renderer.hasRenderedFrame = YES;
-        if (firstFrame) {
-            [target setNeedsLayout];
-        }
+        [submittedRenderers addObject:renderer];
+        [submittedGenerations addObject:@(renderer.renderGeneration)];
         encodedCount++;
     }
     if (encodedCount == 0) {
@@ -705,16 +1047,36 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     }
     double encodeMilliseconds = (CACurrentMediaTime() - encodeStarted) * 1000.0;
     dispatch_semaphore_t semaphore = self.frameSemaphore;
+    NSArray<WBRealtimeGlassRenderer *> *completionRenderers = [submittedRenderers copy];
+    NSArray<NSNumber *> *completionGenerations = [submittedGenerations copy];
     [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
-        if (buffer.status == MTLCommandBufferStatusError) {
+        BOOL succeeded = buffer.status == MTLCommandBufferStatusCompleted && buffer.error == nil;
+        if (!succeeded) {
             @synchronized(WBRealtimeGlassRenderer.class) {
                 WBRealtimeFailureCount++;
                 WBRealtimeLastFailure = [NSString stringWithFormat:@"metal-command-failed:%@", buffer.error.localizedDescription ?: @"unknown"];
             }
         }
         dispatch_semaphore_signal(semaphore);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [completionRenderers enumerateObjectsUsingBlock:^(WBRealtimeGlassRenderer *renderer, NSUInteger index, __unused BOOL *stop) {
+                if (renderer.manager == self && renderer.renderGeneration == completionGenerations[index].unsignedIntegerValue) {
+                    [renderer setRenderedFrameAvailable:succeeded];
+                }
+            }];
+            if (!succeeded) {
+                [self wakeDisplayLink];
+            }
+        });
     }];
     [commandBuffer commit];
+    if (_stableFrameCount >= 3) {
+        self.displayLink.paused = YES;
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeDisplayLinkPauseCount++;
+            WBRealtimeDisplayLinkActive = NO;
+        }
+    }
     @synchronized(WBRealtimeGlassRenderer.class) {
         if (capturedThisFrame) {
             WBRealtimeCaptureCount++;
@@ -730,7 +1092,7 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             WBRealtimeLastSurfaceFrames = [surfaceFrames copy];
         }
     }
-    if (capturedThisFrame || reuseCount % 120 == 0) {
+    if (capturedThisFrame || reuseCount % 120 == 0 || _stableFrameCount == 3) {
         WBRealtimeWriteDiagnostics(renderers.count);
     }
 }
@@ -769,7 +1131,18 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"captureSourceClass": WBRealtimeCaptureSourceClass,
             @"captureSourceFrame": WBRealtimeCaptureSourceFrame,
             @"capturePolicy": WBRealtimeCapturePolicy,
-            @"samplingMode": @"isolated-wallpaper-or-window-backdrop-live-metal-uv-sdf"
+            @"displayLinkActive": @(WBRealtimeDisplayLinkActive),
+            @"displayLinkWakeCount": @(WBRealtimeDisplayLinkWakeCount),
+            @"displayLinkPauseCount": @(WBRealtimeDisplayLinkPauseCount),
+            @"stableFrameCount": @(WBRealtimeStableFrameCount),
+            @"sdfCacheHitCount": @(WBRealtimeSDFCacheHitCount),
+            @"sdfCacheMissCount": @(WBRealtimeSDFCacheMissCount),
+            @"sdfGenerationFailureCount": @(WBRealtimeSDFGenerationFailureCount),
+            @"sdfGenerationMilliseconds": @(WBRealtimeLastSDFGenerationMilliseconds),
+            @"sdfTextureWidth": @(WBRealtimeLastSDFWidth),
+            @"sdfTextureHeight": @(WBRealtimeLastSDFHeight),
+            @"sdfFallback": WBRealtimeLastSDFFallback,
+            @"samplingMode": @"isolated-wallpaper-live-uv-path-sdf-demand-metal"
         };
     }
 }
@@ -795,21 +1168,49 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     return self;
 }
 
+- (void)setRenderedFrameAvailable:(BOOL)available {
+    if (self.hasRenderedFrame == available) {
+        return;
+    }
+    self.hasRenderedFrame = available;
+    if (self.renderStateDidChange) {
+        self.renderStateDidChange(available);
+    }
+    [self.targetView setNeedsLayout];
+}
+
 - (WBRealtimeGlassResult)applyToView:(UIView *)view path:(UIBezierPath *)path bounds:(CGRect)bounds {
     if (!NSThread.isMainThread || ![WBRealtimeGlassRenderer isAvailable] || !view || !path || !view.window || CGRectIsEmpty(bounds)) {
         return WBRealtimeGlassResultFailed;
     }
     WBRealtimeGlassManager *manager = [WBRealtimeGlassManager managerForWindow:view.window];
+    BOOL pathChanged = !self.shapeMask.path || !CGPathEqualToPath(self.shapeMask.path, path.CGPath);
+    BOOL geometryChanged = self.targetView != view || !CGRectEqualToRect(self.requestedBounds, bounds) || pathChanged;
+    BOOL appearanceChanged = self.renderedInterfaceStyle != view.traitCollection.userInterfaceStyle;
+    BOOL renderingChanged = geometryChanged || appearanceChanged;
+    self.renderedInterfaceStyle = view.traitCollection.userInterfaceStyle;
     if (self.manager != manager) {
         [self.manager removeRenderer:self];
         self.targetView = view;
         self.requestedBounds = bounds;
         self.manager = manager;
+        self.renderGeneration++;
+        [self setRenderedFrameAvailable:NO];
         [manager addRenderer:self];
-        self.hasRenderedFrame = NO;
     } else {
         self.targetView = view;
         self.requestedBounds = bounds;
+        if (renderingChanged) {
+            self.renderGeneration++;
+            [self setRenderedFrameAvailable:NO];
+            [manager rendererDidUpdate:self];
+        }
+    }
+    if (geometryChanged || !self.sdfEntry) {
+        NSString *sdfCacheKey = nil;
+        WBRealtimeSDFEntry *sdfEntry = WBRealtimeSDFEntryForPath(path, bounds, &sdfCacheKey);
+        self.sdfEntry = sdfEntry;
+        self.sdfCacheKey = sdfCacheKey;
     }
     if (self.metalView.superview != view) {
         [self.metalView removeFromSuperview];
@@ -826,10 +1227,14 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
 }
 
 - (void)reset {
+    [self setRenderedFrameAvailable:NO];
+    self.renderGeneration++;
     [self.manager removeRenderer:self];
     self.manager = nil;
     self.targetView = nil;
-    self.hasRenderedFrame = NO;
+    self.requestedBounds = CGRectZero;
+    self.sdfEntry = nil;
+    self.sdfCacheKey = nil;
     [self.metalView removeFromSuperview];
 }
 

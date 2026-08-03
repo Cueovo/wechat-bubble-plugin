@@ -11,7 +11,7 @@
 #import "Styling/WBBubblePreferences.h"
 #import "Styling/WBBubbleSettingsHook.h"
 
-NSString * const WeChatBubbleBuildStage = @"isolated-wallpaper-live-uv-metal-liquid-glass";
+NSString * const WeChatBubbleBuildStage = @"demand-driven-path-sdf-metal-liquid-glass";
 
 static BOOL WBStyleHookInstalled;
 static BOOL WBStableLaunchConfirmationScheduled;
@@ -42,8 +42,8 @@ static void WBRunBootstrap(BOOL hookInstalled) {
         styling[@"reason"] = @"required-runtime-capability-missing";
     }
     NSDictionary<NSString *, id> *snapshot = @{
-        @"diagnosticsFormat": @21,
-        @"pluginVersion": @"0.7.2",
+        @"diagnosticsFormat": @22,
+        @"pluginVersion": @"0.8.0",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],

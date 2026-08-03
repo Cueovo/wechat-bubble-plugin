@@ -115,6 +115,7 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
 @property (nonatomic, strong) CAShapeLayer *borderLayer;
 @property (nonatomic, strong) CAShapeLayer *maskLayer;
 @property (nonatomic, strong) WBRealtimeGlassRenderer *realtimeRenderer;
+@property (nonatomic, assign) BOOL realtimeMetalActive;
 @property (nonatomic, copy, nullable) NSString *effectSignature;
 @property (nonatomic, assign) WBBubbleDirection direction;
 @property (nonatomic, assign) WBBubbleTailSide tailSide;
@@ -172,6 +173,11 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         [_maskLayer setContentsScale:UIScreen.mainScreen.scale];
         _maskLayer.fillColor = UIColor.blackColor.CGColor;
         _realtimeRenderer = [WBRealtimeGlassRenderer new];
+        __weak typeof(self) weakSelf = self;
+        _realtimeRenderer.renderStateDidChange = ^(BOOL active) {
+            weakSelf.realtimeMetalActive = active;
+            [weakSelf setNeedsLayout];
+        };
     }
     return self;
 }
@@ -241,6 +247,8 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
             WBRealtimeGlassResult result = [self.realtimeRenderer applyToView:self path:path bounds:localBounds];
             if (result == WBRealtimeGlassResultApplied) {
                 self.effectView.effect = nil;
+            } else if (!self.effectView.effect) {
+                self.effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
             }
         }
     } else {
@@ -250,25 +258,27 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         self.effectSignature = nil;
     }
     BOOL compatibilityGlass = usesGlass && ([backend isEqualToString:@"compatibility-colorless-lens"] || realtimeGlass);
+    BOOL realtimeMetalReady = realtimeGlass && self.realtimeMetalActive;
+    CGFloat compatibilityFillAlpha = realtimeMetalReady ? (dark ? 0.012 : 0.022) : (dark ? 0.035 : 0.075);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     self.shapeLayer.frame = localBounds;
     self.shapeLayer.path = path.CGPath;
-    self.shapeLayer.fillColor = compatibilityGlass ? [UIColor colorWithWhite:1.0 alpha:dark ? 0.035 : 0.075].CGColor : (usesGlass ? UIColor.clearColor.CGColor : fillColor.CGColor);
+    self.shapeLayer.fillColor = compatibilityGlass ? [UIColor colorWithWhite:1.0 alpha:compatibilityFillAlpha].CGColor : (usesGlass ? UIColor.clearColor.CGColor : fillColor.CGColor);
     self.shapeLayer.strokeColor = UIColor.clearColor.CGColor;
     self.borderView.frame = localBounds;
     self.borderLayer.frame = localBounds;
     self.borderLayer.path = borderPath.CGPath;
     self.borderLayer.strokeColor = usesGlass ? UIColor.clearColor.CGColor : [WBBubbleThemeProvider borderColorForDirection:self.direction traitCollection:traits].CGColor;
     self.borderLayer.lineWidth = usesGlass ? 0.0 : [WBBubbleThemeProvider borderWidth];
-    self.rimLayer.hidden = !compatibilityGlass;
+    self.rimLayer.hidden = !compatibilityGlass || realtimeMetalReady;
     self.rimLayer.frame = localBounds;
     self.rimLayer.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:dark ? 0.58 : 0.82].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:0.06].CGColor, (id)[UIColor colorWithWhite:1.0 alpha:dark ? 0.20 : 0.34].CGColor];
     self.rimLayer.locations = @[@0.0, @0.52, @1.0];
     self.rimMaskLayer.frame = localBounds;
     self.rimMaskLayer.path = borderPath.CGPath;
     self.rimMaskLayer.lineWidth = 1.25;
-    self.shadeLayer.hidden = !compatibilityGlass;
+    self.shadeLayer.hidden = !compatibilityGlass || realtimeMetalReady;
     self.shadeLayer.frame = localBounds;
     self.shadeLayer.colors = @[(id)UIColor.clearColor.CGColor, (id)[UIColor colorWithWhite:0.0 alpha:dark ? 0.24 : 0.13].CGColor];
     self.shadeMaskLayer.frame = localBounds;

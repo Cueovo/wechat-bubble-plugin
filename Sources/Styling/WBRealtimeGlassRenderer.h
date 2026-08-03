@@ -12,6 +12,7 @@ typedef NS_ENUM(NSInteger, WBRealtimeGlassResult) {
 
 + (BOOL)isAvailable;
 + (NSDictionary<NSString *, id> *)capabilitySnapshot;
+@property (nonatomic, copy, nullable) void (^renderStateDidChange)(BOOL active);
 - (WBRealtimeGlassResult)applyToView:(UIView *)view path:(UIBezierPath *)path bounds:(CGRect)bounds;
 - (void)reset;
 
