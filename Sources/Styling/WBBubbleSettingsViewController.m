@@ -1,6 +1,5 @@
 #import "WBBubbleSettingsViewController.h"
 #import "WBBubblePreferences.h"
-#import <QuartzCore/QuartzCore.h>
 #import <math.h>
 
 typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
@@ -47,9 +46,6 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 - (UIView *)colorSwatch:(UIColor *)color {
     UIView *swatch = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, 32.0, 32.0)];
     swatch.backgroundColor = color;
-    [swatch.layer setCornerRadius:8.0];
-    [swatch.layer setBorderWidth:1.0 / UIScreen.mainScreen.scale];
-    [swatch.layer setBorderColor:[UIColor colorWithWhite:0.5 alpha:0.5].CGColor];
     return swatch;
 }
 
