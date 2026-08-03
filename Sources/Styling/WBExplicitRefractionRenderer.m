@@ -1,3 +1,4 @@
+#define CI_SILENCE_GL_DEPRECATION 1
 #import "WBExplicitRefractionRenderer.h"
 #import "../Discovery/WBDiagnostics.h"
 #import <CoreImage/CoreImage.h>
