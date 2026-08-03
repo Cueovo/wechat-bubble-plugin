@@ -20,6 +20,11 @@ static double WBRealtimeLastEncodeMilliseconds;
 static CGFloat WBRealtimeLastCaptureScale;
 static NSUInteger WBRealtimeLastPixelWidth;
 static NSUInteger WBRealtimeLastPixelHeight;
+static NSUInteger WBRealtimeBackdropReuseCount;
+static BOOL WBRealtimeTextureYFlipped;
+static BOOL WBRealtimeOrientationCalibrated;
+static BOOL WBRealtimeOrientationFallbackUsed;
+static NSString *WBRealtimeCapturePolicy = @"capture-once-reuse-with-live-window-uv";
 
 static id<MTLDevice> WBRealtimeDevice;
 static id<MTLRenderPipelineState> WBRealtimePipeline;
@@ -28,7 +33,7 @@ static NSString *WBRealtimeShaderSource(void) {
     return @"#include <metal_stdlib>\n"
     @"using namespace metal;\n"
     @"struct VertexOut { float4 position [[position]]; float2 uv; };\n"
-    @"struct GlassUniforms { float2 windowSize; float2 glassOrigin; float2 glassSize; float cornerRadius; float edgeWidth; float refraction; float dispersion; float zoom; float tint; float dark; float time; };\n"
+    @"struct GlassUniforms { float2 windowSize; float2 glassOrigin; float2 glassSize; float cornerRadius; float edgeWidth; float refraction; float dispersion; float zoom; float tint; float dark; float time; float textureYFlip; };\n"
     @"vertex VertexOut wbGlassVertex(uint id [[vertex_id]]) {\n"
     @"float2 positions[4] = {float2(-1,-1),float2(1,-1),float2(-1,1),float2(1,1)};\n"
     @"float2 uvs[4] = {float2(0,1),float2(1,1),float2(0,0),float2(1,0)};\n"
@@ -45,7 +50,7 @@ static NSString *WBRealtimeShaderSource(void) {
     @"float2 normalized=p/max(halfSize,float2(1.0)); float center=clamp(1.0-dot(normalized,normalized),0.0,1.0);\n"
     @"float pulse=0.96+0.04*sin(u.time*1.35+normalized.y*2.4);\n"
     @"float2 lensOffset=normal*u.refraction*edge*pulse-normalized*center*u.zoom;\n"
-    @"float2 base=(u.glassOrigin+local+lensOffset)/u.windowSize; float2 chroma=normal*u.dispersion*edge/u.windowSize;\n"
+    @"float2 base=(u.glassOrigin+local+lensOffset)/u.windowSize; float2 chroma=normal*u.dispersion*edge/u.windowSize; if(u.textureYFlip>0.5){base.y=1.0-base.y;chroma.y=-chroma.y;}\n"
     @"float3 color; color.r=backdrop.sample(s,clamp(base+chroma,float2(0.001),float2(0.999))).r; color.g=backdrop.sample(s,clamp(base,float2(0.001),float2(0.999))).g; color.b=backdrop.sample(s,clamp(base-chroma,float2(0.001),float2(0.999))).b;\n"
     @"float2 texel=1.0/(u.windowSize*1.15); float3 soft=backdrop.sample(s,clamp(base+float2(texel.x,0),float2(0.001),float2(0.999))).rgb+backdrop.sample(s,clamp(base-float2(texel.x,0),float2(0.001),float2(0.999))).rgb+backdrop.sample(s,clamp(base+float2(0,texel.y),float2(0.001),float2(0.999))).rgb+backdrop.sample(s,clamp(base-float2(0,texel.y),float2(0.001),float2(0.999))).rgb;\n"
     @"color=mix(color,soft*0.25,0.16); float lum=dot(color,float3(0.2126,0.7152,0.0722));\n"
@@ -110,6 +115,17 @@ static UIView *WBRealtimeMessageCellForView(UIView *view) {
     return nil;
 }
 
+static UIScrollView *WBRealtimeScrollContainerForView(UIView *view) {
+    UIView *candidate = view;
+    while (candidate) {
+        if ([candidate isKindOfClass:UIScrollView.class]) {
+            return (UIScrollView *)candidate;
+        }
+        candidate = candidate.superview;
+    }
+    return nil;
+}
+
 typedef struct {
     vector_float2 windowSize;
     vector_float2 glassOrigin;
@@ -122,6 +138,7 @@ typedef struct {
     float tint;
     float dark;
     float time;
+    float textureYFlip;
 } WBRealtimeUniforms;
 
 @class WBRealtimeGlassManager;
@@ -151,8 +168,19 @@ typedef struct {
     size_t _pixelWidth;
     size_t _pixelHeight;
     CGFloat _captureScale;
+    BOOL _backdropReady;
+    BOOL _captureDirty;
+    BOOL _orientationCalibrated;
+    BOOL _textureYFlipped;
+    BOOL _orientationFallbackUsed;
+    CGRect _capturedWindowBounds;
+    CGFloat _capturedScreenScale;
+    CGAffineTransform _capturedWindowTransform;
+    __weak UIScreen *_capturedScreen;
+    CFTimeInterval _lastRegistrationTime;
 }
 @property (nonatomic, weak) UIWindow *window;
+@property (nonatomic, weak) UIScrollView *contentScrollView;
 @property (nonatomic, strong) NSHashTable<WBRealtimeGlassRenderer *> *renderers;
 @property (nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property (nonatomic, strong) CADisplayLink *displayLink;
@@ -178,7 +206,12 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"captureScale": @(WBRealtimeLastCaptureScale),
             @"capturePixelWidth": @(WBRealtimeLastPixelWidth),
             @"capturePixelHeight": @(WBRealtimeLastPixelHeight),
-            @"samplingMode": @"continuous-shared-window-capture-metal-sdf",
+            @"backdropReuseCount": @(WBRealtimeBackdropReuseCount),
+            @"textureYFlipped": @(WBRealtimeTextureYFlipped),
+            @"orientationCalibrated": @(WBRealtimeOrientationCalibrated),
+            @"orientationFallbackUsed": @(WBRealtimeOrientationFallbackUsed),
+            @"capturePolicy": WBRealtimeCapturePolicy,
+            @"samplingMode": @"cached-shared-window-backdrop-live-metal-uv-sdf",
             @"updatedAt": NSDate.date
         };
     }
@@ -212,12 +245,16 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         _renderers = [NSHashTable weakObjectsHashTable];
         _commandQueue = [WBRealtimeDevice newCommandQueue];
         _frameSemaphore = dispatch_semaphore_create(1);
+        _captureDirty = YES;
+        _lastRegistrationTime = CACurrentMediaTime();
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, WBRealtimeDevice, nil, &_textureCache);
     }
     return self;
 }
 
 - (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.displayLink invalidate];
     if (_cvTexture) {
         CFRelease(_cvTexture);
@@ -230,8 +267,31 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     }
 }
 
+- (void)applicationDidBecomeActive:(__unused NSNotification *)notification {
+    _backdropReady = NO;
+    _captureDirty = YES;
+    _orientationCalibrated = NO;
+    _orientationFallbackUsed = NO;
+    _lastRegistrationTime = CACurrentMediaTime();
+}
+
 - (void)addRenderer:(WBRealtimeGlassRenderer *)renderer {
+    BOOL firstRenderer = self.renderers.allObjects.count == 0;
+    UIScrollView *scrollView = WBRealtimeScrollContainerForView(renderer.targetView);
+    if (self.contentScrollView && scrollView && self.contentScrollView != scrollView) {
+        _backdropReady = NO;
+        _captureDirty = YES;
+        _orientationCalibrated = NO;
+        _orientationFallbackUsed = NO;
+    }
+    if (scrollView) {
+        self.contentScrollView = scrollView;
+    }
     [self.renderers addObject:renderer];
+    _lastRegistrationTime = CACurrentMediaTime();
+    if (firstRenderer || !_backdropReady) {
+        _captureDirty = YES;
+    }
     if (!self.displayLink) {
         self.displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkDidFire:)];
         self.displayLink.preferredFramesPerSecond = MIN(UIScreen.mainScreen.maximumFramesPerSecond, 60);
@@ -244,6 +304,13 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     if (self.renderers.allObjects.count == 0) {
         [self.displayLink invalidate];
         self.displayLink = nil;
+        _backdropReady = NO;
+        _captureDirty = YES;
+        _capturedWindowBounds = CGRectZero;
+        _capturedScreenScale = 0.0;
+        _capturedWindowTransform = CGAffineTransformIdentity;
+        _capturedScreen = nil;
+        self.contentScrollView = nil;
     }
 }
 
@@ -253,7 +320,8 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     if (!window || size.width < 1.0 || size.height < 1.0 || !isfinite(size.width) || !isfinite(size.height)) {
         return NO;
     }
-    CGFloat scale = MIN(MAX(UIScreen.mainScreen.scale * 0.42, 1.0), 1.25);
+    CGFloat screenScale = window.screen.scale ?: UIScreen.mainScreen.scale;
+    CGFloat scale = MIN(MAX(screenScale * 0.42, 1.0), 1.25);
     CGFloat maximumScale = sqrt(2500000.0 / MAX(size.width * size.height, 1.0));
     scale = MIN(scale, maximumScale);
     size_t width = (size_t)MAX(1.0, ceil(size.width * scale));
@@ -313,6 +381,10 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     }
     void *baseAddress = CVPixelBufferGetBaseAddress(_pixelBuffer);
     size_t bytesPerRow = CVPixelBufferGetBytesPerRow(_pixelBuffer);
+    if (!baseAddress || bytesPerRow < _pixelWidth * 4) {
+        CVPixelBufferUnlockBaseAddress(_pixelBuffer, 0);
+        return NO;
+    }
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(baseAddress, _pixelWidth, _pixelHeight, 8, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
     CGColorSpaceRelease(colorSpace);
@@ -329,18 +401,69 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         [savedOpacities addObject:@(cell.layer.opacity)];
         cell.layer.opacity = 0.0f;
     }
+    CALayer *topMarker = nil;
+    CALayer *bottomMarker = nil;
+    if (!_orientationCalibrated) {
+        CGRect windowBounds = window.bounds;
+        topMarker = [CALayer layer];
+        topMarker.frame = CGRectMake(CGRectGetMinX(windowBounds) + 2.0, CGRectGetMinY(windowBounds) + 2.0, 8.0, 8.0);
+        topMarker.backgroundColor = UIColor.redColor.CGColor;
+        bottomMarker = [CALayer layer];
+        bottomMarker.frame = CGRectMake(CGRectGetMinX(windowBounds) + 2.0, CGRectGetMaxY(windowBounds) - 10.0, 8.0, 8.0);
+        bottomMarker.backgroundColor = UIColor.greenColor.CGColor;
+        [window.layer addSublayer:topMarker];
+        [window.layer addSublayer:bottomMarker];
+    }
     BOOL succeeded = YES;
     @try {
         [window.layer renderInContext:context];
+        CGContextFlush(context);
+        if (topMarker && _pixelWidth > 8 && _pixelHeight > 8) {
+            size_t sampleX = MIN(_pixelWidth - 1, (size_t)llround(6.0 * _captureScale));
+            size_t upperY = MIN(_pixelHeight - 1, (size_t)llround(6.0 * _captureScale));
+            size_t lowerY = _pixelHeight - 1 - upperY;
+            uint8_t *bytes = baseAddress;
+            uint8_t *upperPixel = bytes + upperY * bytesPerRow + sampleX * 4;
+            uint8_t *lowerPixel = bytes + lowerY * bytesPerRow + sampleX * 4;
+            BOOL upperIsRed = upperPixel[2] > 200 && upperPixel[1] < 80 && upperPixel[0] < 80;
+            BOOL upperIsGreen = upperPixel[1] > 100 && upperPixel[2] < 80 && upperPixel[0] < 80;
+            BOOL lowerIsRed = lowerPixel[2] > 200 && lowerPixel[1] < 80 && lowerPixel[0] < 80;
+            BOOL lowerIsGreen = lowerPixel[1] > 100 && lowerPixel[2] < 80 && lowerPixel[0] < 80;
+            if (upperIsRed && lowerIsGreen) {
+                _textureYFlipped = NO;
+                _orientationCalibrated = YES;
+                _orientationFallbackUsed = NO;
+            } else if (upperIsGreen && lowerIsRed) {
+                _textureYFlipped = YES;
+                _orientationCalibrated = YES;
+                _orientationFallbackUsed = NO;
+            } else {
+                _textureYFlipped = YES;
+                _orientationFallbackUsed = YES;
+            }
+            @synchronized(WBRealtimeGlassRenderer.class) {
+                WBRealtimeTextureYFlipped = _textureYFlipped;
+                WBRealtimeOrientationCalibrated = _orientationCalibrated;
+                WBRealtimeOrientationFallbackUsed = _orientationFallbackUsed;
+            }
+        }
     } @catch (__unused NSException *exception) {
         succeeded = NO;
     } @finally {
+        [topMarker removeFromSuperlayer];
+        [bottomMarker removeFromSuperlayer];
         [hiddenLayers enumerateObjectsUsingBlock:^(CALayer *layer, NSUInteger index, __unused BOOL *stop) {
             layer.opacity = savedOpacities[index].floatValue;
         }];
         [CATransaction commit];
         CGContextRelease(context);
         CVPixelBufferUnlockBaseAddress(_pixelBuffer, 0);
+    }
+    if (succeeded) {
+        _capturedWindowBounds = window.bounds;
+        _capturedScreenScale = window.screen.scale;
+        _capturedWindowTransform = window.transform;
+        _capturedScreen = window.screen;
     }
     return succeeded;
 }
@@ -364,25 +487,53 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     if (renderers.count == 0) {
         return;
     }
+    CGFloat currentScreenScale = self.window.screen.scale;
+    BOOL captureCoordinatesChanged = !CGRectEqualToRect(_capturedWindowBounds, self.window.bounds) || fabs(_capturedScreenScale - currentScreenScale) > 0.001 || !CGAffineTransformEqualToTransform(_capturedWindowTransform, self.window.transform) || _capturedScreen != self.window.screen;
+    if (captureCoordinatesChanged) {
+        if (_backdropReady) {
+            _lastRegistrationTime = CACurrentMediaTime();
+        }
+        _captureDirty = YES;
+        _backdropReady = NO;
+        _orientationCalibrated = NO;
+        _orientationFallbackUsed = NO;
+    }
     if (dispatch_semaphore_wait(self.frameSemaphore, DISPATCH_TIME_NOW) != 0) {
         @synchronized(WBRealtimeGlassRenderer.class) {
             WBRealtimeDroppedFrameCount++;
         }
         return;
     }
-    CFTimeInterval captureStarted = CACurrentMediaTime();
-    if (![self captureBackdrop]) {
-        dispatch_semaphore_signal(self.frameSemaphore);
+    BOOL capturedThisFrame = NO;
+    NSUInteger reuseCount = 0;
+    double captureMilliseconds = WBRealtimeLastCaptureMilliseconds;
+    if (!_backdropReady || _captureDirty) {
+        if (CACurrentMediaTime() - _lastRegistrationTime < 0.05) {
+            dispatch_semaphore_signal(self.frameSemaphore);
+            return;
+        }
+        CFTimeInterval captureStarted = CACurrentMediaTime();
+        if (![self captureBackdrop]) {
+            dispatch_semaphore_signal(self.frameSemaphore);
+            NSUInteger failureCount;
+            @synchronized(WBRealtimeGlassRenderer.class) {
+                failureCount = ++WBRealtimeFailureCount;
+                WBRealtimeLastFailure = @"shared-window-capture-failed";
+            }
+            if (failureCount < 4 || failureCount % 120 == 0) {
+                WBRealtimeWriteDiagnostics(renderers.count);
+            }
+            return;
+        }
+        captureMilliseconds = (CACurrentMediaTime() - captureStarted) * 1000.0;
+        _backdropReady = YES;
+        _captureDirty = NO;
+        capturedThisFrame = YES;
+    } else {
         @synchronized(WBRealtimeGlassRenderer.class) {
-            WBRealtimeFailureCount++;
-            WBRealtimeLastFailure = @"shared-window-capture-failed";
+            reuseCount = ++WBRealtimeBackdropReuseCount;
         }
-        if (WBRealtimeFailureCount < 4 || WBRealtimeFailureCount % 120 == 0) {
-            WBRealtimeWriteDiagnostics(renderers.count);
-        }
-        return;
     }
-    double captureMilliseconds = (CACurrentMediaTime() - captureStarted) * 1000.0;
     id<MTLTexture> backdrop = _cvTexture ? CVMetalTextureGetTexture(_cvTexture) : nil;
     id<MTLCommandBuffer> commandBuffer = backdrop ? [self.commandQueue commandBuffer] : nil;
     if (!commandBuffer) {
@@ -415,10 +566,11 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         if (!encoder) {
             continue;
         }
+        CGRect windowBounds = self.window.bounds;
         CGFloat radius = MIN([WBBubbleThemeProvider cornerRadius], MIN(CGRectGetWidth(renderer.requestedBounds), CGRectGetHeight(renderer.requestedBounds)) * 0.5);
         WBRealtimeUniforms uniforms = {
-            .windowSize = {(float)CGRectGetWidth(self.window.bounds), (float)CGRectGetHeight(self.window.bounds)},
-            .glassOrigin = {(float)CGRectGetMinX(frameInWindow), (float)CGRectGetMinY(frameInWindow)},
+            .windowSize = {(float)CGRectGetWidth(windowBounds), (float)CGRectGetHeight(windowBounds)},
+            .glassOrigin = {(float)(CGRectGetMinX(frameInWindow) - CGRectGetMinX(windowBounds)), (float)(CGRectGetMinY(frameInWindow) - CGRectGetMinY(windowBounds))},
             .glassSize = {(float)CGRectGetWidth(frameInWindow), (float)CGRectGetHeight(frameInWindow)},
             .cornerRadius = (float)radius,
             .edgeWidth = 15.0f,
@@ -427,7 +579,8 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             .zoom = 2.2f,
             .tint = 0.32f,
             .dark = target.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark ? 1.0f : 0.0f,
-            .time = (float)fmod(CACurrentMediaTime(), 1000.0)
+            .time = (float)fmod(CACurrentMediaTime(), 1000.0),
+            .textureYFlip = _textureYFlipped ? 1.0f : 0.0f
         };
         [encoder setRenderPipelineState:WBRealtimePipeline];
         [encoder setFragmentTexture:backdrop atIndex:0];
@@ -459,7 +612,9 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     }];
     [commandBuffer commit];
     @synchronized(WBRealtimeGlassRenderer.class) {
-        WBRealtimeCaptureCount++;
+        if (capturedThisFrame) {
+            WBRealtimeCaptureCount++;
+        }
         WBRealtimeFrameCount += encodedCount;
         WBRealtimeLastFailure = @"none";
         WBRealtimeLastCaptureMilliseconds = captureMilliseconds;
@@ -468,7 +623,7 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         WBRealtimeLastPixelWidth = _pixelWidth;
         WBRealtimeLastPixelHeight = _pixelHeight;
     }
-    if (WBRealtimeCaptureCount == 1 || WBRealtimeCaptureCount % 120 == 0) {
+    if (capturedThisFrame || reuseCount % 120 == 0) {
         WBRealtimeWriteDiagnostics(renderers.count);
     }
 }
@@ -495,7 +650,12 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"droppedFrameCount": @(WBRealtimeDroppedFrameCount),
             @"failureCount": @(WBRealtimeFailureCount),
             @"lastFailure": WBRealtimeLastFailure,
-            @"samplingMode": @"continuous-shared-window-capture-metal-sdf"
+            @"backdropReuseCount": @(WBRealtimeBackdropReuseCount),
+            @"textureYFlipped": @(WBRealtimeTextureYFlipped),
+            @"orientationCalibrated": @(WBRealtimeOrientationCalibrated),
+            @"orientationFallbackUsed": @(WBRealtimeOrientationFallbackUsed),
+            @"capturePolicy": WBRealtimeCapturePolicy,
+            @"samplingMode": @"cached-shared-window-backdrop-live-metal-uv-sdf"
         };
     }
 }
@@ -528,12 +688,15 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     WBRealtimeGlassManager *manager = [WBRealtimeGlassManager managerForWindow:view.window];
     if (self.manager != manager) {
         [self.manager removeRenderer:self];
+        self.targetView = view;
+        self.requestedBounds = bounds;
         self.manager = manager;
         [manager addRenderer:self];
         self.hasRenderedFrame = NO;
+    } else {
+        self.targetView = view;
+        self.requestedBounds = bounds;
     }
-    self.targetView = view;
-    self.requestedBounds = bounds;
     if (self.metalView.superview != view) {
         [self.metalView removeFromSuperview];
         NSUInteger index = MIN((NSUInteger)1, view.subviews.count);

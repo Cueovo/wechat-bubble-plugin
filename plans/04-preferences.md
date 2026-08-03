@@ -150,6 +150,21 @@
 4. 快速滚动 30 秒并记录 `captureMilliseconds`、`encodeMilliseconds`、`droppedFrameCount`；确认没有明显持续掉帧、内存增长、文字/头像递归残影和 Cell 复用串位。
 5. 覆盖长消息、多段消息、左右尾巴、浅色/深色、前后台切换、切换纯色和关闭插件；任何 Metal/capture 失败都只能回退到无色 UIKit 材质，不能导致气泡消失或微信崩溃。
 
+## 0.7.1 坐标校准与捕获卡顿修复
+
+- 0.7.0 真机诊断记录到 11 个活动气泡、`captureMilliseconds=51.219`、`encodeMilliseconds=0.585`。卡顿根因不是 Metal，而是主线程以 1.25× 每帧执行一次完整 `window.layer renderInContext:`；约 51ms 的捕获成本不可能达到 60 FPS。
+- 0.7.1 不再逐帧重新展平窗口。进入聊天并等待当前可见气泡注册稳定 50ms 后只生成一张排除文字 Cell 的干净窗口背景；后续每个显示帧只按气泡实时窗口坐标更新 Metal UV，静态聊天壁纸下滚动仍逐帧同步，但不再承担全窗口 CPU 捕获。
+- 窗口尺寸变化、当前聊天的全部气泡离开后重新进入时会使缓存失效并重新捕获；同一窗口、同一聊天滚动和 Cell 复用继续共享已有干净背景。
+- 第一次捕获会在不提交到屏幕的 Core Animation 事务中绘制顶部红色和底部绿色校准标记，并直接检查 BGRA 缓冲区的上下行，自动确定 `renderInContext:` 输出相对 Metal 纹理是否需要 Y 翻转。无法可靠识别时按 0.7.0 真机错位表现启用 Y 翻转回退。
+- 诊断格式升级到 20，增加 `capturePolicy=capture-once-reuse-with-live-window-uv`、`backdropReuseCount`、`textureYFlipped`、`orientationCalibrated` 和 `orientationFallbackUsed`。正常滚动时 `captureCount` 应保持不变，`backdropReuseCount` 和 `renderedFrameCount` 持续增长。
+
+### 0.7.1 真机复测
+
+1. 用具有明显上下差异的聊天背景检查气泡内图案与气泡外同一窗口位置一致；诊断中确认 `orientationCalibrated=true`，并记录 `textureYFlipped`。
+2. 连续拖动和惯性滚动 30 秒，确认 `captureCount` 不随每帧增加、`backdropReuseCount` 持续增加，且不再出现约 51ms 的逐帧主线程停顿。
+3. 切出聊天再进入、切换横竖屏或窗口尺寸后确认会产生一次新捕获，随后继续复用；新气泡不得采到旧消息文字或头像。
+4. 如果仍有坐标错位，导出格式 20 诊断并附一张能同时看到气泡内外相同背景特征的截图，用于区分 Y 翻转、窗口原点或壁纸 contentMode 问题。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。
