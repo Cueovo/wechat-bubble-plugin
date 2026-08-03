@@ -13,6 +13,7 @@ WeChatBubble_FILES = \
 	Sources/Bootstrap/WBVersionGate.m \
 	Sources/Discovery/WBCapabilityRegistry.m \
 	Sources/Discovery/WBDiagnostics.m \
+	Sources/Styling/WBBubblePreferences.m \
 	Sources/Styling/WBBubbleThemeProvider.m \
 	Sources/Styling/WBBubbleStyler.m \
 	Sources/Styling/WBTextBubbleStyleHook.m
