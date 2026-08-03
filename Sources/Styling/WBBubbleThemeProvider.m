@@ -99,7 +99,7 @@ static NSString *WBNativeGlassReason = @"not-probed";
 }
 
 + (NSString *)themeIdentifier {
-    return [NSString stringWithFormat:@"stage05-material-v12-%@", [self resolvedMaterialBackend]];
+    return [NSString stringWithFormat:@"stage05-material-v13-%@", [self resolvedMaterialBackend]];
 }
 
 + (UIColor *)fillColorForDirection:(WBBubbleDirection)direction traitCollection:(UITraitCollection *)traitCollection {

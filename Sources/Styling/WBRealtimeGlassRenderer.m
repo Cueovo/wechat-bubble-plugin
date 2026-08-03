@@ -39,6 +39,9 @@ static BOOL WBRealtimeDisplayLinkActive;
 static NSUInteger WBRealtimeSDFCacheHitCount;
 static NSUInteger WBRealtimeSDFCacheMissCount;
 static NSUInteger WBRealtimeSDFGenerationFailureCount;
+static NSUInteger WBRealtimeSDFAsyncRequestCount;
+static NSUInteger WBRealtimeSDFAsyncCompletionCount;
+static NSUInteger WBRealtimeSDFAsyncCancellationCount;
 static double WBRealtimeLastSDFGenerationMilliseconds;
 static NSUInteger WBRealtimeLastSDFWidth;
 static NSUInteger WBRealtimeLastSDFHeight;
@@ -63,7 +66,7 @@ static NSString *WBRealtimeShaderSource(void) {
     @"constexpr sampler s(coord::normalized,address::clamp_to_edge,filter::linear);\n"
     @"float2 local=in.uv*u.glassSize; float2 halfSize=u.glassSize*0.5; float2 p=local-halfSize;\n"
     @"float radius=min(u.cornerRadius,min(halfSize.x,halfSize.y)); float d=wbRoundedBox(p,halfSize,radius); float2 normal=float2(0.0); float coverage=1.0;\n"
-    @"if(u.sdfEnabled>0.5){float c=pathSDF.sample(s,in.uv).r; d=(c-0.5)*(2.0*u.sdfRange); float l=pathSDF.sample(s,in.uv-float2(u.sdfTexelSize.x,0)).r; float r=pathSDF.sample(s,in.uv+float2(u.sdfTexelSize.x,0)).r; float t=pathSDF.sample(s,in.uv-float2(0,u.sdfTexelSize.y)).r; float b=pathSDF.sample(s,in.uv+float2(0,u.sdfTexelSize.y)).r; float2 gradient=float2(r-l,b-t); float gradientLength=length(gradient); normal=gradientLength>0.0001?gradient/gradientLength:float2(0.0); float antialias=max(fwidth(d),0.55); coverage=1.0-smoothstep(-antialias,antialias,d);}\n"
+    @"if(u.sdfEnabled>0.5){float c=pathSDF.sample(s,in.uv).r; d=(c-0.5)*(2.0*u.sdfRange); float2 gradient=float2(dfdx(d),dfdy(d)); float gradientLength=length(gradient); normal=gradientLength>0.0001?gradient/gradientLength:float2(0.0); float antialias=max(fwidth(d),0.55); coverage=1.0-smoothstep(-antialias,antialias,d);}\n"
     @"else{float epsilon=0.75; float dx=wbRoundedBox(p+float2(epsilon,0),halfSize,radius)-wbRoundedBox(p-float2(epsilon,0),halfSize,radius); float dy=wbRoundedBox(p+float2(0,epsilon),halfSize,radius)-wbRoundedBox(p-float2(0,epsilon),halfSize,radius); float2 gradient=float2(dx,dy); float gradientLength=length(gradient); normal=gradientLength>0.0001?gradient/gradientLength:float2(0.0);}\n"
     @"float depth=max(-d,0.0); float edge=1.0-smoothstep(0.0,max(u.edgeWidth,1.0),depth); edge=edge*edge*(3.0-2.0*edge);\n"
     @"float2 normalized=p/max(halfSize,float2(1.0)); float center=clamp(1.0-dot(normalized,normalized),0.0,1.0);\n"
@@ -290,20 +293,45 @@ static NSCache<NSString *, WBRealtimeSDFEntry *> *WBRealtimeSDFCache(void) {
     return cache;
 }
 
-static WBRealtimeSDFEntry *WBRealtimeSDFEntryForPath(UIBezierPath *path, CGRect bounds, NSString **cacheKey) {
+static NSString *WBRealtimeSDFCacheKeyForPath(UIBezierPath *path, CGRect bounds, NSUInteger *textureWidth, NSUInteger *textureHeight) {
     if (!path || CGRectIsEmpty(bounds) || !WBRealtimeDevice) {
-        @synchronized(WBRealtimeGlassRenderer.class) {
-            WBRealtimeSDFGenerationFailureCount++;
-            WBRealtimeLastSDFFallback = @"invalid-path-bounds-or-device";
-        }
         return nil;
     }
     CGFloat maxSide = MAX(CGRectGetWidth(bounds), CGRectGetHeight(bounds));
     NSUInteger longDimension = maxSide <= 72.0 ? 64 : (maxSide <= 160.0 ? 128 : 256);
     NSUInteger width = MAX(24, (NSUInteger)llround(longDimension * CGRectGetWidth(bounds) / maxSide));
     NSUInteger height = MAX(24, (NSUInteger)llround(longDimension * CGRectGetHeight(bounds) / maxSide));
+    if (textureWidth) {
+        *textureWidth = width;
+    }
+    if (textureHeight) {
+        *textureHeight = height;
+    }
     uint64_t pathHash = WBRealtimePathHash(path, bounds);
-    NSString *key = [NSString stringWithFormat:@"%p-%016llx-%lux%lu", (__bridge void *)WBRealtimeDevice, (unsigned long long)pathHash, (unsigned long)width, (unsigned long)height];
+    return [NSString stringWithFormat:@"%p-%016llx-%lux%lu", (__bridge void *)WBRealtimeDevice, (unsigned long long)pathHash, (unsigned long)width, (unsigned long)height];
+}
+
+static dispatch_queue_t WBRealtimeSDFGenerationQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        queue = dispatch_queue_create("com.bi8bo.wechat.bubble.sdf-generation", DISPATCH_QUEUE_SERIAL);
+        dispatch_set_target_queue(queue, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+    });
+    return queue;
+}
+
+static WBRealtimeSDFEntry *WBRealtimeSDFEntryForPath(UIBezierPath *path, CGRect bounds, NSString **cacheKey) {
+    NSUInteger width = 0;
+    NSUInteger height = 0;
+    NSString *key = WBRealtimeSDFCacheKeyForPath(path, bounds, &width, &height);
+    if (!key) {
+        @synchronized(WBRealtimeGlassRenderer.class) {
+            WBRealtimeSDFGenerationFailureCount++;
+            WBRealtimeLastSDFFallback = @"invalid-path-bounds-or-device";
+        }
+        return nil;
+    }
     if (cacheKey) {
         *cacheKey = key;
     }
@@ -335,7 +363,7 @@ static WBRealtimeSDFEntry *WBRealtimeSDFEntryForPath(UIBezierPath *path, CGRect 
     WBRealtimeDistanceTransform(inside, width, height, YES, distanceToInside);
     WBRealtimeDistanceTransform(inside, width, height, NO, distanceToOutside);
     float pointsPerPixel = (float)MAX(CGRectGetWidth(bounds) / width, CGRectGetHeight(bounds) / height);
-    float range = (float)MIN(16.0, MAX(8.0, MIN(CGRectGetWidth(bounds), CGRectGetHeight(bounds)) * 0.22));
+    float range = (float)MIN(24.0, MAX(16.0, MIN(CGRectGetWidth(bounds), CGRectGetHeight(bounds)) * 0.35));
     NSMutableData *encodedData = [NSMutableData dataWithLength:count];
     uint8_t *encoded = encodedData.mutableBytes;
     for (NSUInteger index = 0; index < count; index++) {
@@ -408,6 +436,7 @@ typedef struct {
 @property (nonatomic, assign) BOOL hasRenderedFrame;
 @property (nonatomic, strong) WBRealtimeSDFEntry *sdfEntry;
 @property (nonatomic, copy) NSString *sdfCacheKey;
+@property (nonatomic, assign) NSUInteger sdfRequestGeneration;
 @property (nonatomic, assign) NSUInteger renderGeneration;
 @property (nonatomic, assign) UIUserInterfaceStyle renderedInterfaceStyle;
 - (void)setRenderedFrameAvailable:(BOOL)available;
@@ -486,11 +515,16 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"sdfCacheHitCount": @(WBRealtimeSDFCacheHitCount),
             @"sdfCacheMissCount": @(WBRealtimeSDFCacheMissCount),
             @"sdfGenerationFailureCount": @(WBRealtimeSDFGenerationFailureCount),
+            @"sdfAsyncRequestCount": @(WBRealtimeSDFAsyncRequestCount),
+            @"sdfAsyncCompletionCount": @(WBRealtimeSDFAsyncCompletionCount),
+            @"sdfAsyncCancellationCount": @(WBRealtimeSDFAsyncCancellationCount),
+            @"sdfGenerationPolicy": @"serial-utility-queue-cache-deduplicated",
+            @"sdfShaderSamplesPerFragment": @1,
             @"sdfGenerationMilliseconds": @(WBRealtimeLastSDFGenerationMilliseconds),
             @"sdfTextureWidth": @(WBRealtimeLastSDFWidth),
             @"sdfTextureHeight": @(WBRealtimeLastSDFHeight),
             @"sdfFallback": WBRealtimeLastSDFFallback,
-            @"samplingMode": @"isolated-wallpaper-live-uv-path-sdf-demand-metal",
+            @"samplingMode": @"isolated-wallpaper-live-uv-async-path-sdf-demand-metal",
             @"updatedAt": NSDate.date
         };
     }
@@ -996,10 +1030,10 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         CGRect windowBounds = self.window.bounds;
         CGFloat shortSide = MIN(CGRectGetWidth(renderer.requestedBounds), CGRectGetHeight(renderer.requestedBounds));
         CGFloat radius = MIN([WBBubbleThemeProvider cornerRadius], shortSide * 0.5);
-        float edgeWidth = (float)MIN(10.0, MAX(5.5, shortSide * 0.16));
-        float refraction = (float)MIN(12.0, MAX(6.0, shortSide * 0.19));
-        float dispersion = MIN(1.8f, MAX(0.8f, refraction * 0.14f));
-        float zoom = (float)MIN(2.2, MAX(1.1, shortSide * 0.035));
+        float edgeWidth = 15.0f;
+        float refraction = 13.0f;
+        float dispersion = 1.6f;
+        float zoom = 2.2f;
         WBRealtimeSDFEntry *sdfEntry = renderer.sdfEntry;
         id<MTLTexture> sdfTexture = sdfEntry.texture ?: WBRealtimeFallbackSDFTexture;
         WBRealtimeUniforms uniforms = {
@@ -1138,11 +1172,16 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"sdfCacheHitCount": @(WBRealtimeSDFCacheHitCount),
             @"sdfCacheMissCount": @(WBRealtimeSDFCacheMissCount),
             @"sdfGenerationFailureCount": @(WBRealtimeSDFGenerationFailureCount),
+            @"sdfAsyncRequestCount": @(WBRealtimeSDFAsyncRequestCount),
+            @"sdfAsyncCompletionCount": @(WBRealtimeSDFAsyncCompletionCount),
+            @"sdfAsyncCancellationCount": @(WBRealtimeSDFAsyncCancellationCount),
+            @"sdfGenerationPolicy": @"serial-utility-queue-cache-deduplicated",
+            @"sdfShaderSamplesPerFragment": @1,
             @"sdfGenerationMilliseconds": @(WBRealtimeLastSDFGenerationMilliseconds),
             @"sdfTextureWidth": @(WBRealtimeLastSDFWidth),
             @"sdfTextureHeight": @(WBRealtimeLastSDFHeight),
             @"sdfFallback": WBRealtimeLastSDFFallback,
-            @"samplingMode": @"isolated-wallpaper-live-uv-path-sdf-demand-metal"
+            @"samplingMode": @"isolated-wallpaper-live-uv-async-path-sdf-demand-metal"
         };
     }
 }
@@ -1202,15 +1241,65 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         self.requestedBounds = bounds;
         if (renderingChanged) {
             self.renderGeneration++;
-            [self setRenderedFrameAvailable:NO];
             [manager rendererDidUpdate:self];
         }
     }
-    if (geometryChanged || !self.sdfEntry) {
-        NSString *sdfCacheKey = nil;
-        WBRealtimeSDFEntry *sdfEntry = WBRealtimeSDFEntryForPath(path, bounds, &sdfCacheKey);
-        self.sdfEntry = sdfEntry;
-        self.sdfCacheKey = sdfCacheKey;
+    if (geometryChanged || !self.sdfCacheKey) {
+        NSUInteger sdfWidth = 0;
+        NSUInteger sdfHeight = 0;
+        NSString *desiredSDFCacheKey = WBRealtimeSDFCacheKeyForPath(path, bounds, &sdfWidth, &sdfHeight);
+        if (desiredSDFCacheKey && ![self.sdfCacheKey isEqualToString:desiredSDFCacheKey]) {
+            self.sdfCacheKey = desiredSDFCacheKey;
+            self.sdfRequestGeneration++;
+            NSUInteger requestGeneration = self.sdfRequestGeneration;
+            WBRealtimeSDFEntry *cachedEntry = [WBRealtimeSDFCache() objectForKey:desiredSDFCacheKey];
+            if (cachedEntry) {
+                self.sdfEntry = cachedEntry;
+                @synchronized(WBRealtimeGlassRenderer.class) {
+                    WBRealtimeSDFCacheHitCount++;
+                    WBRealtimeLastSDFFallback = @"none";
+                    WBRealtimeLastSDFWidth = sdfWidth;
+                    WBRealtimeLastSDFHeight = sdfHeight;
+                }
+            } else {
+                self.sdfEntry = nil;
+                UIBezierPath *pathCopy = [path copy];
+                __weak typeof(self) weakSelf = self;
+                @synchronized(WBRealtimeGlassRenderer.class) {
+                    WBRealtimeSDFAsyncRequestCount++;
+                    WBRealtimeLastSDFFallback = @"rounded-box-pending-sdf";
+                }
+                dispatch_async(WBRealtimeSDFGenerationQueue(), ^{
+                    __block BOOL shouldGenerate = NO;
+                    dispatch_sync(dispatch_get_main_queue(), ^{
+                        __strong typeof(weakSelf) currentSelf = weakSelf;
+                        shouldGenerate = currentSelf && currentSelf.sdfRequestGeneration == requestGeneration && [currentSelf.sdfCacheKey isEqualToString:desiredSDFCacheKey];
+                    });
+                    if (!shouldGenerate) {
+                        @synchronized(WBRealtimeGlassRenderer.class) {
+                            WBRealtimeSDFAsyncCancellationCount++;
+                        }
+                        return;
+                    }
+                    NSString *generatedKey = nil;
+                    WBRealtimeSDFEntry *generatedEntry = WBRealtimeSDFEntryForPath(pathCopy, bounds, &generatedKey);
+                    @synchronized(WBRealtimeGlassRenderer.class) {
+                        WBRealtimeSDFAsyncCompletionCount++;
+                    }
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        __strong typeof(weakSelf) strongSelf = weakSelf;
+                        if (!strongSelf || strongSelf.sdfRequestGeneration != requestGeneration || ![strongSelf.sdfCacheKey isEqualToString:generatedKey]) {
+                            return;
+                        }
+                        strongSelf.sdfEntry = generatedEntry;
+                        if (generatedEntry && strongSelf.manager) {
+                            strongSelf.renderGeneration++;
+                            [strongSelf.manager rendererDidUpdate:strongSelf];
+                        }
+                    });
+                });
+            }
+        }
     }
     if (self.metalView.superview != view) {
         [self.metalView removeFromSuperview];
@@ -1229,6 +1318,7 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
 - (void)reset {
     [self setRenderedFrameAvailable:NO];
     self.renderGeneration++;
+    self.sdfRequestGeneration++;
     [self.manager removeRenderer:self];
     self.manager = nil;
     self.targetView = nil;

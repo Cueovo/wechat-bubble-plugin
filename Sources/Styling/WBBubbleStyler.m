@@ -244,8 +244,8 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         backend = [WBBubbleThemeProvider resolvedMaterialBackend];
         realtimeGlass = [backend isEqualToString:@"compatibility-realtime-metal"];
         if (realtimeGlass) {
-            WBRealtimeGlassResult result = [self.realtimeRenderer applyToView:self path:path bounds:localBounds];
-            if (result == WBRealtimeGlassResultApplied) {
+            WBRealtimeGlassResult renderResult = [self.realtimeRenderer applyToView:self path:path bounds:localBounds];
+            if (renderResult == WBRealtimeGlassResultApplied) {
                 self.effectView.effect = nil;
             } else if (!self.effectView.effect) {
                 self.effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
