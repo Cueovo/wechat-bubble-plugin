@@ -56,11 +56,96 @@ static UIView *WBTextViewForCell(id object, UIView *cellView) {
     return WBDescendantOfClass(cellView, NSClassFromString(@"RichTextView"));
 }
 
-static WBBubbleDirection WBDirectionForMessage(id object, UIView *avatarView, UIView *cellView) {
+static id WBMessageWrapForCell(id object) {
     id messageWrap = WBValueFromSelector(object, @"getCurrentMessageWrap");
-    if (!messageWrap) {
-        messageWrap = WBValueFromSelector(object, @"messageWrap");
+    return messageWrap ?: WBValueFromSelector(object, @"messageWrap");
+}
+
+static long long WBMessageIdentifier(id messageWrap) {
+    static NSArray<NSString *> *selectorNames;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        selectorNames = @[@"m_n64MesSvrID", @"mesSvrID", @"getMesSvrID", @"m_uiMesLocalID", @"mesLocalID"];
+    });
+    for (NSString *selectorName in selectorNames) {
+        SEL selector = NSSelectorFromString(selectorName);
+        if ([messageWrap respondsToSelector:selector]) {
+            long long identifier = ((long long (*)(id, SEL))objc_msgSend)(messageWrap, selector);
+            if (identifier != 0) {
+                return identifier;
+            }
+        }
     }
+    return 0;
+}
+
+static BOOL WBSameMessage(id leftCell, id rightCell) {
+    id leftWrap = WBMessageWrapForCell(leftCell);
+    id rightWrap = WBMessageWrapForCell(rightCell);
+    if (!leftWrap || !rightWrap) {
+        return NO;
+    }
+    if (leftWrap == rightWrap) {
+        return YES;
+    }
+    long long leftIdentifier = WBMessageIdentifier(leftWrap);
+    return leftIdentifier != 0 && leftIdentifier == WBMessageIdentifier(rightWrap);
+}
+
+static void WBCollectMessageCells(UIView *rootView, Class cellClass, NSMutableArray<UIView *> *cells) {
+    if ([rootView isKindOfClass:cellClass]) {
+        [cells addObject:rootView];
+    }
+    for (UIView *subview in rootView.subviews) {
+        WBCollectMessageCells(subview, cellClass, cells);
+    }
+}
+
+static WBBubbleSegmentPosition WBSegmentPositionForCell(id object, UIView *cellView) {
+    Class cellClass = NSClassFromString(@"CommonMessageCellView");
+    if (!cellClass || !WBMessageWrapForCell(object)) {
+        return WBBubbleSegmentPositionSingle;
+    }
+    UIView *rootView = cellView;
+    for (NSUInteger depth = 0; depth < 5 && rootView.superview; depth++) {
+        rootView = rootView.superview;
+        if ([rootView isKindOfClass:UITableView.class]) {
+            break;
+        }
+    }
+    NSMutableArray<UIView *> *cells = [NSMutableArray array];
+    WBCollectMessageCells(rootView, cellClass, cells);
+    CGRect currentRect = [cellView convertRect:cellView.bounds toView:rootView];
+    BOOL hasPreviousSegment = NO;
+    BOOL hasNextSegment = NO;
+    for (UIView *candidate in cells) {
+        if (candidate == cellView || !WBSameMessage(object, candidate)) {
+            continue;
+        }
+        CGRect candidateRect = [candidate convertRect:candidate.bounds toView:rootView];
+        CGFloat verticalGap;
+        if (CGRectGetMidY(candidateRect) < CGRectGetMidY(currentRect)) {
+            verticalGap = CGRectGetMinY(currentRect) - CGRectGetMaxY(candidateRect);
+            hasPreviousSegment |= verticalGap >= -4.0 && verticalGap <= 8.0;
+        } else {
+            verticalGap = CGRectGetMinY(candidateRect) - CGRectGetMaxY(currentRect);
+            hasNextSegment |= verticalGap >= -4.0 && verticalGap <= 8.0;
+        }
+    }
+    if (hasPreviousSegment && hasNextSegment) {
+        return WBBubbleSegmentPositionMiddle;
+    }
+    if (hasNextSegment) {
+        return WBBubbleSegmentPositionTop;
+    }
+    if (hasPreviousSegment) {
+        return WBBubbleSegmentPositionBottom;
+    }
+    return WBBubbleSegmentPositionSingle;
+}
+
+static WBBubbleDirection WBDirectionForMessage(id object, UIView *avatarView, UIView *cellView) {
+    id messageWrap = WBMessageWrapForCell(object);
     Class messageClass = NSClassFromString(@"CMessageWrap");
     SEL senderSelector = NSSelectorFromString(@"isSenderFromMsgWrap:");
     if (messageWrap && messageClass && [messageClass respondsToSelector:senderSelector]) {
@@ -127,6 +212,7 @@ static void WBApplyStyle(id object, BOOL clearIfInvalid) {
     UIView *avatarView = WBAvatarView(object, cellView);
     WBBubbleDirection direction = WBDirectionForMessage(object, avatarView, cellView);
     WBBubbleTailSide tailSide = WBTailSideForDirection(direction);
+    WBBubbleSegmentPosition segmentPosition = WBSegmentPositionForCell(object, cellView);
     BOOL tailSideKnown = direction != WBBubbleDirectionUnknown;
     UIView *previousBubble = objc_getAssociatedObject(object, &WBLastStyledBubbleKey);
     if (previousBubble && previousBubble != bubbleView) {
@@ -138,7 +224,7 @@ static void WBApplyStyle(id object, BOOL clearIfInvalid) {
         }
         return;
     }
-    if ([WBBubbleStyler applyToBubbleView:bubbleView direction:direction tailSide:tailSide]) {
+    if ([WBBubbleStyler applyToBubbleView:bubbleView direction:direction tailSide:tailSide segmentPosition:segmentPosition]) {
         objc_setAssociatedObject(object, &WBLastStyledBubbleKey, bubbleView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } else {
         WBClearStyle(object, bubbleView);
@@ -152,6 +238,9 @@ static void WBLayoutContentViewHook(id object, SEL selector) {
     WBClearStyle(object, nil);
     WBOriginalLayoutContentView(object, selector);
     WBApplyStyle(object, YES);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        WBApplyStyle(object, NO);
+    });
 }
 
 static void WBLayoutSubviewsHook(id object, SEL selector) {

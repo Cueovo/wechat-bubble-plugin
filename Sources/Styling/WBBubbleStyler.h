@@ -9,9 +9,16 @@ typedef NS_ENUM(NSInteger, WBBubbleTailSide) {
     WBBubbleTailSideRight
 };
 
+typedef NS_ENUM(NSInteger, WBBubbleSegmentPosition) {
+    WBBubbleSegmentPositionSingle = 0,
+    WBBubbleSegmentPositionTop,
+    WBBubbleSegmentPositionMiddle,
+    WBBubbleSegmentPositionBottom
+};
+
 @interface WBBubbleStyler : NSObject
 
-+ (BOOL)applyToBubbleView:(UIView *)bubbleView direction:(WBBubbleDirection)direction tailSide:(WBBubbleTailSide)tailSide;
++ (BOOL)applyToBubbleView:(UIView *)bubbleView direction:(WBBubbleDirection)direction tailSide:(WBBubbleTailSide)tailSide segmentPosition:(WBBubbleSegmentPosition)segmentPosition;
 + (void)removeFromBubbleView:(UIView *)bubbleView;
 
 @end

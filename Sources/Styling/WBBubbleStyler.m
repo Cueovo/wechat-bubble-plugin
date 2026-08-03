@@ -2,7 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 
-static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide) {
+static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide, WBBubbleSegmentPosition segmentPosition) {
     CGFloat minX = CGRectGetMinX(bounds);
     CGFloat minY = CGRectGetMinY(bounds);
     CGFloat maxX = CGRectGetMaxX(bounds);
@@ -11,13 +11,12 @@ static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide) {
     CGFloat height = CGRectGetHeight(bounds);
     CGFloat tailWidth = MIN(5.0, width * 0.12);
     CGFloat radius = MIN([WBBubbleThemeProvider cornerRadius], MIN((width - tailWidth) * 0.5, height * 0.5));
-    CGFloat straightTop = minY + radius;
-    CGFloat straightBottom = maxY - radius;
+    CGFloat topRadius = (segmentPosition == WBBubbleSegmentPositionMiddle || segmentPosition == WBBubbleSegmentPositionBottom) ? 0.0 : radius;
+    CGFloat bottomRadius = (segmentPosition == WBBubbleSegmentPositionTop || segmentPosition == WBBubbleSegmentPositionMiddle) ? 0.0 : radius;
+    CGFloat straightTop = minY + topRadius;
+    CGFloat straightBottom = maxY - bottomRadius;
     CGFloat availableHeight = straightBottom - straightTop;
-    BOOL includesTail = availableHeight >= 10.0;
-    if (!includesTail) {
-        tailWidth = 0.0;
-    }
+    BOOL includesTail = (segmentPosition == WBBubbleSegmentPositionSingle || segmentPosition == WBBubbleSegmentPositionTop) && availableHeight >= 10.0;
     CGFloat bodyMinX = tailSide == WBBubbleTailSideLeft ? minX + tailWidth : minX;
     CGFloat bodyMaxX = tailSide == WBBubbleTailSideRight ? maxX - tailWidth : maxX;
     CGFloat tailSpan = includesTail ? MIN(10.0, availableHeight - 2.0) : 0.0;
@@ -25,25 +24,25 @@ static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide) {
     CGFloat tailTop = tailCenter - tailSpan * 0.5;
     CGFloat tailBottom = tailCenter + tailSpan * 0.5;
     UIBezierPath *path = [UIBezierPath bezierPath];
-    [path moveToPoint:CGPointMake(bodyMinX + radius, minY)];
-    [path addLineToPoint:CGPointMake(bodyMaxX - radius, minY)];
-    [path addQuadCurveToPoint:CGPointMake(bodyMaxX, minY + radius) controlPoint:CGPointMake(bodyMaxX, minY)];
+    [path moveToPoint:CGPointMake(bodyMinX + topRadius, minY)];
+    [path addLineToPoint:CGPointMake(bodyMaxX - topRadius, minY)];
+    [path addQuadCurveToPoint:CGPointMake(bodyMaxX, minY + topRadius) controlPoint:CGPointMake(bodyMaxX, minY)];
     if (tailSide == WBBubbleTailSideRight && includesTail) {
         [path addLineToPoint:CGPointMake(bodyMaxX, tailTop)];
         [path addLineToPoint:CGPointMake(maxX, tailCenter)];
         [path addLineToPoint:CGPointMake(bodyMaxX, tailBottom)];
     }
-    [path addLineToPoint:CGPointMake(bodyMaxX, maxY - radius)];
-    [path addQuadCurveToPoint:CGPointMake(bodyMaxX - radius, maxY) controlPoint:CGPointMake(bodyMaxX, maxY)];
-    [path addLineToPoint:CGPointMake(bodyMinX + radius, maxY)];
-    [path addQuadCurveToPoint:CGPointMake(bodyMinX, maxY - radius) controlPoint:CGPointMake(bodyMinX, maxY)];
+    [path addLineToPoint:CGPointMake(bodyMaxX, maxY - bottomRadius)];
+    [path addQuadCurveToPoint:CGPointMake(bodyMaxX - bottomRadius, maxY) controlPoint:CGPointMake(bodyMaxX, maxY)];
+    [path addLineToPoint:CGPointMake(bodyMinX + bottomRadius, maxY)];
+    [path addQuadCurveToPoint:CGPointMake(bodyMinX, maxY - bottomRadius) controlPoint:CGPointMake(bodyMinX, maxY)];
     if (tailSide == WBBubbleTailSideLeft && includesTail) {
         [path addLineToPoint:CGPointMake(bodyMinX, tailBottom)];
         [path addLineToPoint:CGPointMake(minX, tailCenter)];
         [path addLineToPoint:CGPointMake(bodyMinX, tailTop)];
     }
-    [path addLineToPoint:CGPointMake(bodyMinX, minY + radius)];
-    [path addQuadCurveToPoint:CGPointMake(bodyMinX + radius, minY) controlPoint:CGPointMake(bodyMinX, minY)];
+    [path addLineToPoint:CGPointMake(bodyMinX, minY + topRadius)];
+    [path addQuadCurveToPoint:CGPointMake(bodyMinX + topRadius, minY) controlPoint:CGPointMake(bodyMinX, minY)];
     [path closePath];
     return path;
 }
@@ -53,6 +52,7 @@ static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide) {
 @property (nonatomic, strong) CAShapeLayer *maskLayer;
 @property (nonatomic, assign) WBBubbleDirection direction;
 @property (nonatomic, assign) WBBubbleTailSide tailSide;
+@property (nonatomic, assign) WBBubbleSegmentPosition segmentPosition;
 @end
 
 @implementation WBBubbleOverlayView
@@ -77,14 +77,14 @@ static UIBezierPath *WBBubblePath(CGRect bounds, WBBubbleTailSide tailSide) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGRect localBounds = (CGRect){CGPointZero, self.bounds.size};
-    UIBezierPath *path = WBBubblePath(localBounds, self.tailSide);
+    UIBezierPath *path = WBBubblePath(localBounds, self.tailSide, self.segmentPosition);
     UITraitCollection *traits = self.traitCollection;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     self.shapeLayer.frame = localBounds;
     self.shapeLayer.path = path.CGPath;
     self.shapeLayer.fillColor = [WBBubbleThemeProvider fillColorForDirection:self.direction traitCollection:traits].CGColor;
-    self.shapeLayer.strokeColor = [WBBubbleThemeProvider borderColorForDirection:self.direction traitCollection:traits].CGColor;
+    self.shapeLayer.strokeColor = self.segmentPosition == WBBubbleSegmentPositionSingle ? [WBBubbleThemeProvider borderColorForDirection:self.direction traitCollection:traits].CGColor : UIColor.clearColor.CGColor;
     self.shapeLayer.lineWidth = [WBBubbleThemeProvider borderWidth];
     self.maskLayer.frame = localBounds;
     self.maskLayer.path = path.CGPath;
@@ -106,7 +106,7 @@ static char WBBubbleStyleStateKey;
 
 @implementation WBBubbleStyler
 
-+ (BOOL)applyToBubbleView:(UIView *)bubbleView direction:(WBBubbleDirection)direction tailSide:(WBBubbleTailSide)tailSide {
++ (BOOL)applyToBubbleView:(UIView *)bubbleView direction:(WBBubbleDirection)direction tailSide:(WBBubbleTailSide)tailSide segmentPosition:(WBBubbleSegmentPosition)segmentPosition {
     if (!NSThread.isMainThread || ![WBBubbleThemeProvider isEnabled] || direction == WBBubbleDirectionUnknown || CGRectIsEmpty(bubbleView.bounds)) {
         [self removeFromBubbleView:bubbleView];
         return NO;
@@ -126,6 +126,7 @@ static char WBBubbleStyleStateKey;
     overlayView.frame = bubbleView.bounds;
     overlayView.direction = direction;
     overlayView.tailSide = tailSide;
+    overlayView.segmentPosition = segmentPosition;
     if (bubbleView.layer.mask != overlayView.maskLayer) {
         state.originalMask = bubbleView.layer.mask;
         bubbleView.layer.mask = overlayView.maskLayer;
