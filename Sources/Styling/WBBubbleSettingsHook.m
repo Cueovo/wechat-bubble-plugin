@@ -50,10 +50,6 @@ static BOOL WBAddSettingsEntry(id object) {
     }
     ((void (*)(id, SEL, id))objc_msgSend)(sectionInfo, addCellSelector, cellInfo);
     ((void (*)(id, SEL, id))objc_msgSend)(tableViewInfo, addSectionSelector, sectionInfo);
-    id tableView = WBIvarValue(object, @"m_tableView");
-    if ([tableView respondsToSelector:@selector(reloadData)]) {
-        ((void (*)(id, SEL))objc_msgSend)(tableView, @selector(reloadData));
-    }
     objc_setAssociatedObject(object, WBSettingsEntryAddedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return YES;
 }
