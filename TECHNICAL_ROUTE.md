@@ -1,7 +1,7 @@
 # iOS 微信聊天气泡插件技术路线（MVP）
 
 - 决策日期：2026-08-03
-- 文档状态：阶段 01/02 已完成，阶段 03 固定主题 MVP 实施中
+- 文档状态：阶段 01/02 已完成；阶段 03 已产出可构建包，等待真机验收；阶段 04 的 0.3.0 实现已开始，尚未构建和真机验收；阶段 05/06 尚未完成
 - 项目阶段：MVP
 - 目标：仅修改本机 iOS 微信聊天界面的消息气泡外观
 - 计划分发：公开分发
@@ -28,6 +28,115 @@
 - 微信界面主体仍可通过 Objective-C Runtime/UIKit 观察和定点修改。Objective-C 对私有类、动态 Selector 和旧式 UIKit 视图树的适配成本低于纯 Swift。
 - Dopamine RootHide 让微信保持 App Store 官方安装形态，不需要修改微信 Bundle ID、签名和 entitlements；相较重签名 IPA，推送、Keychain、URL Scheme、应用更新及数据容器更少受到影响。
 - TrollStore/TrollFools 可以复用同一业务核心，但只覆盖有限系统，不应被描述为面向所有 iPhone 的通用方案。
+
+### 1.3 本次成功构建代表什么
+
+审计基线为提交 `17623c41a6f94e30046c34f4dfa2d311b4d64640`。GitHub Actions `Build RootHide Package #31` 已完成且结论为 `success`。这能证明：
+
+- 所有列入 `WeChatBubble_FILES` 的 Objective-C 源码可在固定 `roothide/theos` revision 下完成 arm64 编译和链接；
+- `WBBubblePreferences` 实现已经进入 dylib，上一轮 `_OBJC_CLASS_$_WBBubblePreferences` 未定义符号已消失；
+- 能生成且仅生成一个 `.deb`，包 ID 为 `com.bi8bo.wechat.bubble`，Debian 架构为 `iphoneos-arm64e`；
+- 包内存在 `WeChatBubble.dylib`，并通过了“不能出现普通 rootless `/var/jb/...` 安装路径”的检查；
+- CI 已生成包信息、内容清单、构建环境记录和 SHA-256，并将其作为 14 天保留的 artifact 上传。
+
+构建成功**不能**证明 Hook 在真机上命中，也不能证明微信不崩溃、气泡显示正确、滚动无回归或卸载后完全恢复。CI 是“产物门”，真机回归才是“功能门”。链接器的 `-multiply_defined is obsolete` 是当前工具链发出的非阻断警告，不是此次失败原因；发布前应持续观察，但不应通过关闭全部警告掩盖它。
+
+### 1.4 当前 0.2.1 安装后的严格预期
+
+只有同时满足以下条件，安装后才应该看到气泡变化：
+
+1. 使用原生 RootHide 环境安装 GitHub Actions 生成的 `.deb`，依赖的 tweak loader/Substrate 兼容层可用；
+2. 完全结束微信进程后重新打开；
+3. 主应用 Bundle ID 为 `com.tencent.xin`，且当前进程确实是微信主可执行进程；
+4. 微信 `CFBundleShortVersionString` 精确等于 `8.0.60`，`CFBundleVersion` 精确等于 `8.0.60.35`；
+5. 运行时存在 `CommonMessageCellView`、`YYAsyncImageView`、`RichTextView`，并且目标 Cell 响应 `layoutContentView`、`getBgImageView`、`getHeadImageView`；
+6. 当前气泡通过文字视图结构、可见性和最小尺寸校验。
+
+满足后，当前包应产生如下可见效果：
+
+| 场景 | 浅色模式 | 深色模式 | 轮廓 |
+|---|---|---|---|
+| 发送文字 | 填充 `#DCC8FF` | 填充 `#4C3E70` | 浅色描边 `#8B68C9`，深色描边 `#9B84DC` |
+| 接收文字 | 填充 `#E8F0FF` | 填充 `#26344A` | 浅色描边 `#708FB8`，深色描边 `#5B7497` |
+
+统一样式为 100% 不透明填充、约 5pt 圆角、1pt 描边。接收气泡尾巴应在左侧，发送气泡尾巴应在右侧。超长文字如果被微信拆成多个相邻 Cell，顶部片段保留顶部圆角和唯一尾巴，中间片段只保留左右边，底部片段保留底部圆角，片段连接处不应出现横向描边。
+
+插件只应覆盖满足结构校验的文字气泡。图片、语音、视频、文件、位置、转账等消息应保持微信原样；文字内容、Cell 尺寸、约束、点击、长按、复制和链接行为也不应变化。Cell 复用或布局重建时旧覆盖层应先清理，不应出现左右颜色串位、重复图层、绿色残边或离屏任务覆盖新消息。
+
+以下情况看到“完全没有变化”反而是当前设计的正确失败关闭行为：微信 build 不完全匹配、私有类或 Selector 改名、目标类加载失败、收发方向无法确认，或者气泡不满足文字结构校验。此时应先看诊断，不应立即放宽白名单或改为全局 Hook。
+
+### 1.5 当前包明确不会出现的效果
+
+虽然仓库中已经存在偏好设置和设置页源码，但当前 0.2.1 不能把它们当作已交付功能：
+
+- Build #31 对应的 `Makefile` 只编译 `WBBubblePreferences.m`，没有编译 `WBBubbleSettingsHook.m` 和 `WBBubbleSettingsViewController.m`；
+- 启动入口没有调用 `WBBubbleSettingsHook installIfPossible`；
+- 因此微信“设置”中**不应出现**“聊天气泡”入口；
+- `ThemeProvider` 当前只从偏好读取总开关，实际颜色、圆角、描边和透明度仍是编译期固定值；偏好文件中的默认色 `#D1B8FF`/`#BDE0FF` 当前也不会决定最终显示色；
+- 当前可见 Cell 全量刷新函数没有接入偏好变更通知，因此即使外部修改偏好，也没有完整的即时刷新保证；
+- 安全模式、启动哨兵、冲突检测、设置内诊断页和 TrollFools 产物仍是规划项。
+
+`WBBubblePreferences` 默认注册 `enabled=YES`，所以白名单和能力检查通过时，首次安装无需设置即可显示固定主题。用户不能据此推断“设置与持久化阶段已经完成”。
+
+以上结论专指最后一个已通过 CI 的 0.2.1/Build #31。工作区中的 0.3.0 阶段 04 实现已把设置源码加入构建、接通 schema 2 偏好和即时刷新，但在新的 CI 与真机验收通过前仍不能视为可交付包。
+
+### 1.6 诊断文件与判定标准
+
+插件启动后应在微信应用容器的 `Library/Caches/WeChatBubble/diagnostics.plist` 写入诊断快照。当前正确基线应至少满足：
+
+```text
+pluginVersion = 0.2.1
+diagnosticsFormat = 5
+buildStage = text-bubble-core
+process.isWeChatMainProcess = true
+versionGate.shortVersion = 8.0.60
+versionGate.buildVersion = 8.0.60.35
+versionGate.uiModificationAllowed = true
+styling.hookInstalled = true
+styling.mode = fixed-solid-colors
+styling.themeIdentifier = stage03-fixed-v2
+```
+
+若 `uiModificationAllowed=false`，说明版本门控阻止了 Hook；若它为 `true` 而 `hookInstalled=false`，说明必要私有类或 Selector 未满足。当前阶段文档中仍有 `0.1.7`、`diagnosticsFormat=4` 等旧验收值，真机验收应以本节的 0.2.1/format 5 为准，后续应统一清理文档漂移。
+
+还需修正一个口径问题：当前代码会临时取得 `CMessageWrap`，调用发送方判定方法，并读取服务端或本地消息 ID 来合并超长消息片段。它没有读取消息正文、数据库、联系人或账号凭据，也没有持久化这些 ID，但这仍属于“读取最小消息元数据”。因此当前诊断中的 `messageDataRead=NO` 和文档中的“完全不接触消息模型”并不严谨。公开测试前必须二选一：
+
+- **稳定性优先（推荐）：** 保留只读、瞬时的方向和消息 ID 元数据，明确披露用途，禁止日志与持久化；
+- **最小数据接触优先：** 移除消息模型访问，仅用 UI 几何判断方向，并接受长消息拼接和方向识别稳定性下降。
+
+不能保持现有实现的同时继续宣称“完全不读取消息模型”。
+
+### 1.7 本轮真机验收清单
+
+本次构建只有全部通过以下检查，才可以把阶段 03 标记为完成：
+
+1. 记录 artifact 对应 commit、SHA-256、设备、iOS、Dopamine RootHide、loader 和微信精确 build；
+2. 全新安装后完全结束微信，冷启动无崩溃、黑屏、卡死或崩溃循环；
+3. 首屏文字气泡直接显示主题色，不先闪现绿色或白色；
+4. 单聊和群聊的发送/接收单行、多行、Emoji、链接、引用文字方向与颜色正确；
+5. 超长消息的顶部/中间/底部轮廓连续，无重复尾巴、横线、断边和绿色残边；
+6. 图片、语音、视频、文件、位置、红包/转账等非文字消息完全不变；
+7. 快速上下滚动至少 20 轮，反复进入/退出会话和前后台切换，无串色、重复覆盖层和明显掉帧；
+8. 切换浅色/深色后重新进入会话，颜色正确且文字可读；
+9. 长按、复制、链接点击、菜单、消息选择和无障碍行为保持正常；
+10. 核对诊断字段与本节基线一致；
+11. 在非 `8.0.60.35` 微信上确认插件失败关闭，不注册气泡 Hook；
+12. 卸载插件并结束微信后，所有气泡恢复微信原样。
+
+出现异常时，先停用或卸载 tweak 并保留诊断文件；不要在主账号、主力机上继续反复触发崩溃。
+
+### 1.8 2026 年 8 月下旬的稳健推进顺序
+
+在当前锁定设备是 iPhone 14 Pro Max / iOS 16.5 / Dopamine 2.4.9 RootHide / ElleKit 1.2 的前提下，最稳路线仍是 **Objective-C + UIKit + 固定 revision 的 `roothide/theos` + 窄范围 Objective-C Runtime Hook + 原生 RootHide `.deb`**。不应因为一次 CI 成功就切换到 Swift/Orion、全局 UIKit Hook、重签名微信 IPA 或同时开发多种注入载体。
+
+建议按以下 Gate 顺序推进：
+
+1. **先完成阶段 03 真机门：** 冻结 0.2.1 功能，不加设置页，完成上述气泡、复用、长消息和卸载回归；
+2. **再完成阶段 04 设置门：** 接通设置源码、偏好通知和可见 Cell 刷新，让关闭功能真正恢复当前及后续气泡，并明确浅/深色配置模型；
+3. **然后完成阶段 05 安全门：** 增加启动哨兵、安全模式、能力失败原因、冲突提示和 Instruments 性能基线；
+4. **最后完成阶段 06 发布门：** 全新安装、升级、降级、卸载、包内容、依赖、哈希和支持矩阵全部通过；
+5. **新微信版本单独适配：** 先作为 `Unknown` 做类、Selector、视图结构和全矩阵回归，通过后再新增精确白名单；
+6. **第二载体后置：** RootHide MVP 稳定后才评估 TrollStore/TrollFools，不让第二注入链扩大首版故障面。
 
 ## 2. 一个核心不等于三条路线同样稳定
 
@@ -414,5 +523,6 @@ Apple 的沙箱和强制代码签名不允许普通第三方应用修改另一�
 12. Apple Runtime Process Security：<https://support.apple.com/guide/security/security-of-runtime-process-sec15bfe098e/web>
 13. Apple App Review Guidelines：<https://developer.apple.com/app-store/review/guidelines/>
 14. WeChatGlass（用于观察公开的现代微信 UI Tweak 工程实践，不作为兼容性保证）：<https://github.com/RayrenSX/WeChatGlass>
+15. 本项目 GitHub Actions `Build RootHide Package #31`：<https://github.com/Cueovo/wechat-bubble-plugin/actions/runs/30807410117>
 
 > 注：微信私有类和社区项目不是稳定官方 API；引用它们只用于评估可行性和工程实践。真正的支持范围必须以本项目真机测试矩阵为准。

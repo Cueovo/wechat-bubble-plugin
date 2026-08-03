@@ -4,8 +4,14 @@
 #import <objc/message.h>
 
 typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
-    WBSettingsColorTargetOutgoing = 0,
-    WBSettingsColorTargetIncoming
+    WBSettingsColorTargetLightOutgoingFill = 0,
+    WBSettingsColorTargetLightIncomingFill,
+    WBSettingsColorTargetLightOutgoingBorder,
+    WBSettingsColorTargetLightIncomingBorder,
+    WBSettingsColorTargetDarkOutgoingFill,
+    WBSettingsColorTargetDarkIncomingFill,
+    WBSettingsColorTargetDarkOutgoingBorder,
+    WBSettingsColorTargetDarkIncomingBorder
 };
 
 @interface WBBubbleSettingsViewController () <UIColorPickerViewControllerDelegate>
@@ -25,15 +31,28 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 4;
+    return 5;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return section == 2 ? 3 : (section == 1 ? 2 : 1);
+    switch (section) {
+        case 0: return 1;
+        case 1:
+        case 2: return 4;
+        case 3: return 3;
+        case 4: return 2;
+        default: return 0;
+    }
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return @[@"功能", @"颜色", @"外观", @""][section];
+    switch (section) {
+        case 0: return @"功能";
+        case 1: return @"浅色模式";
+        case 2: return @"深色模式";
+        case 3: return @"外观";
+        default: return nil;
+    }
 }
 
 - (UITableViewCell *)baseCellWithTitle:(NSString *)title detail:(NSString *)detail {
@@ -55,8 +74,48 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
     slider.minimumValue = minimum;
     slider.maximumValue = maximum;
     slider.value = value;
+    slider.continuous = NO;
     [slider addTarget:self action:action forControlEvents:UIControlEventValueChanged];
     return slider;
+}
+
+- (WBSettingsColorTarget)colorTargetForIndexPath:(NSIndexPath *)indexPath {
+    return (WBSettingsColorTarget)(indexPath.row + (indexPath.section == 2 ? 4 : 0));
+}
+
+- (BOOL)targetIsDark:(WBSettingsColorTarget)target {
+    return target >= WBSettingsColorTargetDarkOutgoingFill;
+}
+
+- (BOOL)targetIsBorder:(WBSettingsColorTarget)target {
+    NSInteger value = target % 4;
+    return value == 2 || value == 3;
+}
+
+- (BOOL)targetIsOutgoing:(WBSettingsColorTarget)target {
+    return target % 2 == 0;
+}
+
+- (UIColor *)colorForTarget:(WBSettingsColorTarget)target {
+    BOOL outgoing = [self targetIsOutgoing:target];
+    BOOL dark = [self targetIsDark:target];
+    return [self targetIsBorder:target] ? [WBBubblePreferences borderColorForOutgoing:outgoing dark:dark] : [WBBubblePreferences fillColorForOutgoing:outgoing dark:dark];
+}
+
+- (NSString *)hexForTarget:(WBSettingsColorTarget)target {
+    BOOL outgoing = [self targetIsOutgoing:target];
+    BOOL dark = [self targetIsDark:target];
+    return [self targetIsBorder:target] ? [WBBubblePreferences borderColorHexForOutgoing:outgoing dark:dark] : [WBBubblePreferences fillColorHexForOutgoing:outgoing dark:dark];
+}
+
+- (UITableViewCell *)colorCellForIndexPath:(NSIndexPath *)indexPath {
+    WBSettingsColorTarget target = [self colorTargetForIndexPath:indexPath];
+    NSString *title = @[@"发送气泡颜色", @"接收气泡颜色", @"发送描边颜色", @"接收描边颜色"][indexPath.row];
+    UITableViewCell *cell = [self baseCellWithTitle:title detail:[NSString stringWithFormat:@"#%@", [self hexForTarget:target]]];
+    cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    cell.accessoryView = [self colorSwatch:[self colorForTarget:target]];
+    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+    return cell;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -68,15 +127,10 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
         cell.accessoryView = toggle;
         return cell;
     }
-    if (indexPath.section == 1) {
-        BOOL outgoing = indexPath.row == 0;
-        UITableViewCell *cell = [self baseCellWithTitle:outgoing ? @"发送气泡颜色" : @"接收气泡颜色" detail:nil];
-        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-        cell.accessoryView = [self colorSwatch:[WBBubblePreferences fillColorForOutgoing:outgoing]];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        return cell;
+    if (indexPath.section == 1 || indexPath.section == 2) {
+        return [self colorCellForIndexPath:indexPath];
     }
-    if (indexPath.section == 2) {
+    if (indexPath.section == 3) {
         if (indexPath.row == 0) {
             UITableViewCell *cell = [self baseCellWithTitle:@"圆角" detail:[NSString stringWithFormat:@"%.0f", [WBBubblePreferences cornerRadius]]];
             cell.accessoryView = [self sliderWithMinimum:4.0 maximum:24.0 value:[WBBubblePreferences cornerRadius] action:@selector(cornerRadiusChanged:)];
@@ -91,8 +145,9 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
         cell.accessoryView = [self sliderWithMinimum:0.35 maximum:1.0 value:[WBBubblePreferences opacity] action:@selector(opacityChanged:)];
         return cell;
     }
-    UITableViewCell *cell = [self baseCellWithTitle:@"恢复默认设置" detail:nil];
-    cell.textLabel.textColor = UIColor.systemRedColor;
+    NSString *title = indexPath.row == 0 ? @"恢复插件默认主题" : @"恢复微信原始外观";
+    UITableViewCell *cell = [self baseCellWithTitle:title detail:nil];
+    cell.textLabel.textColor = indexPath.row == 0 ? self.view.tintColor : UIColor.systemRedColor;
     cell.textLabel.textAlignment = NSTextAlignmentCenter;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     return cell;
@@ -100,23 +155,33 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 1) {
-        self.colorTarget = indexPath.row == 0 ? WBSettingsColorTargetOutgoing : WBSettingsColorTargetIncoming;
+    if (indexPath.section == 1 || indexPath.section == 2) {
+        self.colorTarget = [self colorTargetForIndexPath:indexPath];
         UIColorPickerViewController *picker = [[UIColorPickerViewController alloc] init];
         ((void (*)(id, SEL, id))objc_msgSend)(picker, NSSelectorFromString(@"setDelegate:"), self);
         ((void (*)(id, SEL, BOOL))objc_msgSend)(picker, NSSelectorFromString(@"setSupportsAlpha:"), NO);
-        ((void (*)(id, SEL, id))objc_msgSend)(picker, NSSelectorFromString(@"setSelectedColor:"), [WBBubblePreferences fillColorForOutgoing:self.colorTarget == WBSettingsColorTargetOutgoing]);
+        ((void (*)(id, SEL, id))objc_msgSend)(picker, NSSelectorFromString(@"setSelectedColor:"), [self colorForTarget:self.colorTarget]);
         [self presentViewController:picker animated:YES completion:nil];
-    } else if (indexPath.section == 3) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复默认设置" message:@"颜色和外观参数将恢复为默认值。" preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-        __weak typeof(self) weakSelf = self;
-        [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
-            [WBBubblePreferences reset];
-            [weakSelf.tableView reloadData];
-        }]];
-        [self presentViewController:alert animated:YES completion:nil];
+        return;
     }
+    if (indexPath.section != 4) {
+        return;
+    }
+    BOOL resetTheme = indexPath.row == 0;
+    NSString *title = resetTheme ? @"恢复插件默认主题" : @"恢复微信原始外观";
+    NSString *message = resetTheme ? @"颜色和外观参数将恢复为插件默认值，并保持功能开启。" : @"自定义气泡将持续关闭，当前和后续文字气泡恢复微信原始样式；已保存的主题参数不会删除。";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"确认" style:(resetTheme ? UIAlertActionStyleDefault : UIAlertActionStyleDestructive) handler:^(__unused UIAlertAction *action) {
+        if (resetTheme) {
+            [WBBubblePreferences reset];
+        } else {
+            [WBBubblePreferences setEnabled:NO];
+        }
+        [weakSelf.tableView reloadData];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)enabledChanged:(UISwitch *)sender {
@@ -125,33 +190,37 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 
 - (void)cornerRadiusChanged:(UISlider *)sender {
     [WBBubblePreferences setCornerRadius:round(sender.value)];
+    [self.tableView reloadData];
 }
 
 - (void)borderWidthChanged:(UISlider *)sender {
     [WBBubblePreferences setBorderWidth:round(sender.value * 10.0) / 10.0];
+    [self.tableView reloadData];
 }
 
 - (void)opacityChanged:(UISlider *)sender {
     [WBBubblePreferences setOpacity:round(sender.value * 20.0) / 20.0];
+    [self.tableView reloadData];
+}
+
+- (void)applySelectedColor:(UIColorPickerViewController *)viewController {
+    UIColor *selectedColor = ((id (*)(id, SEL))objc_msgSend)(viewController, NSSelectorFromString(@"selectedColor"));
+    BOOL outgoing = [self targetIsOutgoing:self.colorTarget];
+    BOOL dark = [self targetIsDark:self.colorTarget];
+    if ([self targetIsBorder:self.colorTarget]) {
+        [WBBubblePreferences setBorderColor:selectedColor outgoing:outgoing dark:dark];
+    } else {
+        [WBBubblePreferences setFillColor:selectedColor outgoing:outgoing dark:dark];
+    }
 }
 
 - (void)colorPickerViewControllerDidFinish:(UIColorPickerViewController *)viewController {
-    UIColor *selectedColor = ((id (*)(id, SEL))objc_msgSend)(viewController, NSSelectorFromString(@"selectedColor"));
-    if (self.colorTarget == WBSettingsColorTargetOutgoing) {
-        [WBBubblePreferences setOutgoingColor:selectedColor];
-    } else {
-        [WBBubblePreferences setIncomingColor:selectedColor];
-    }
+    [self applySelectedColor:viewController];
     [self.tableView reloadData];
 }
 
 - (void)colorPickerViewControllerDidSelectColor:(UIColorPickerViewController *)viewController {
-    UIColor *selectedColor = ((id (*)(id, SEL))objc_msgSend)(viewController, NSSelectorFromString(@"selectedColor"));
-    if (self.colorTarget == WBSettingsColorTargetOutgoing) {
-        [WBBubblePreferences setOutgoingColor:selectedColor];
-    } else {
-        [WBBubblePreferences setIncomingColor:selectedColor];
-    }
+    [self applySelectedColor:viewController];
 }
 
 @end

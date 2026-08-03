@@ -10,6 +10,52 @@ static BOOL WBSettingsHookInstalled;
 static BOOL WBSettingsEntryAvailable;
 static const void *WBSettingsEntryAddedKey = &WBSettingsEntryAddedKey;
 
+static char WBTypeCode(const char *type) {
+    while (*type == 'r' || *type == 'n' || *type == 'N' || *type == 'o' || *type == 'O' || *type == 'R' || *type == 'V') {
+        type++;
+    }
+    return *type;
+}
+
+static BOOL WBReturnMatches(Method method, char expected) {
+    if (!method) {
+        return NO;
+    }
+    char type[16] = {0};
+    method_getReturnType(method, type, sizeof(type));
+    return WBTypeCode(type) == expected;
+}
+
+static BOOL WBArgumentMatches(Method method, unsigned int index, char expected) {
+    if (!method) {
+        return NO;
+    }
+    char type[16] = {0};
+    method_getArgumentType(method, index, type, sizeof(type));
+    return WBTypeCode(type) == expected;
+}
+
+static BOOL WBIntegerArgumentMatches(Method method, unsigned int index) {
+    if (!method) {
+        return NO;
+    }
+    char type = 0;
+    char encoding[16] = {0};
+    method_getArgumentType(method, index, encoding, sizeof(encoding));
+    type = WBTypeCode(encoding);
+    return type == 'c' || type == 'C' || type == 's' || type == 'S' || type == 'i' || type == 'I' || type == 'l' || type == 'L' || type == 'q' || type == 'Q' || type == 'B';
+}
+
+static BOOL WBSettingsAPISignaturesMatch(Class cellInfoClass, Class sectionInfoClass, id tableViewInfo, SEL cellSelector, SEL sectionSelector, SEL addCellSelector, SEL addSectionSelector) {
+    Method cellMethod = class_getClassMethod(cellInfoClass, cellSelector);
+    Method sectionMethod = class_getClassMethod(sectionInfoClass, sectionSelector);
+    Method addCellMethod = class_getInstanceMethod(sectionInfoClass, addCellSelector);
+    Method addSectionMethod = class_getInstanceMethod(object_getClass(tableViewInfo), addSectionSelector);
+    BOOL addCellReturnValid = WBReturnMatches(addCellMethod, 'v') || WBReturnMatches(addCellMethod, '@');
+    BOOL addSectionReturnValid = WBReturnMatches(addSectionMethod, 'v') || WBReturnMatches(addSectionMethod, '@');
+    return cellMethod && method_getNumberOfArguments(cellMethod) == 6 && WBReturnMatches(cellMethod, '@') && WBArgumentMatches(cellMethod, 2, ':') && WBArgumentMatches(cellMethod, 3, '@') && WBArgumentMatches(cellMethod, 4, '@') && WBIntegerArgumentMatches(cellMethod, 5) && sectionMethod && method_getNumberOfArguments(sectionMethod) == 2 && WBReturnMatches(sectionMethod, '@') && addCellMethod && method_getNumberOfArguments(addCellMethod) == 3 && addCellReturnValid && WBArgumentMatches(addCellMethod, 2, '@') && addSectionMethod && method_getNumberOfArguments(addSectionMethod) == 3 && addSectionReturnValid && WBArgumentMatches(addSectionMethod, 2, '@');
+}
+
 static id WBIvarValue(id object, NSString *name) {
     Class currentClass = object_getClass(object);
     Ivar ivar = NULL;
@@ -20,9 +66,9 @@ static id WBIvarValue(id object, NSString *name) {
     return ivar ? object_getIvar(object, ivar) : nil;
 }
 
-static void WBOpenBubbleSettings(id object, SEL selector) {
+static void WBOpenBubbleSettings(id object, __unused SEL selector) {
     UIViewController *controller = [object isKindOfClass:UIViewController.class] ? object : nil;
-    if (!controller) {
+    if (!controller.navigationController) {
         return;
     }
     WBBubbleSettingsViewController *settings = [[WBBubbleSettingsViewController alloc] init];
@@ -40,7 +86,7 @@ static BOOL WBAddSettingsEntry(id object) {
     SEL sectionSelector = NSSelectorFromString(@"sectionInfoDefaut");
     SEL addCellSelector = NSSelectorFromString(@"addCell:");
     SEL addSectionSelector = NSSelectorFromString(@"addSection:");
-    if (!tableViewInfo || ![cellInfoClass respondsToSelector:cellSelector] || ![sectionInfoClass respondsToSelector:sectionSelector] || ![tableViewInfo respondsToSelector:addSectionSelector]) {
+    if (!tableViewInfo || ![cellInfoClass respondsToSelector:cellSelector] || ![sectionInfoClass respondsToSelector:sectionSelector] || ![tableViewInfo respondsToSelector:addSectionSelector] || !WBSettingsAPISignaturesMatch(cellInfoClass, sectionInfoClass, tableViewInfo, cellSelector, sectionSelector, addCellSelector, addSectionSelector)) {
         return NO;
     }
     id cellInfo = ((id (*)(id, SEL, SEL, id, id, NSInteger))objc_msgSend)(cellInfoClass, cellSelector, NSSelectorFromString(@"wb_openBubbleSettings"), object, @"聊天气泡", 1);

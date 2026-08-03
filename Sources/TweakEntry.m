@@ -9,7 +9,7 @@
 #import "Styling/WBBubblePreferences.h"
 #import "Styling/WBBubbleSettingsHook.h"
 
-NSString * const WeChatBubbleBuildStage = @"text-bubble-core";
+NSString * const WeChatBubbleBuildStage = @"preferences";
 
 static void WBRunBootstrap(BOOL hookInstalled) {
     if (![WBProcessGuard isWeChatMainProcess]) {
@@ -27,8 +27,8 @@ static void WBRunBootstrap(BOOL hookInstalled) {
         styling[@"reason"] = @"required-runtime-capability-missing";
     }
     NSDictionary<NSString *, id> *snapshot = @{
-        @"diagnosticsFormat": @5,
-        @"pluginVersion": @"0.2.1",
+        @"diagnosticsFormat": @6,
+        @"pluginVersion": @"0.3.0",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],
@@ -37,11 +37,15 @@ static void WBRunBootstrap(BOOL hookInstalled) {
             @"mode": @"validated",
             @"explorationHookInstalled": @NO,
             @"capabilities": [WBCapabilityRegistry discoverySnapshot],
-            @"messageDataRead": @NO,
+            @"messageDataRead": @YES,
+            @"messageModelMetadataRead": @YES,
+            @"messageContentRead": @NO,
             @"textRead": @NO,
-            @"recursiveViewTreeScanned": @NO
+            @"recursiveViewTreeScanned": @YES
         },
-        @"styling": styling
+        @"styling": styling,
+        @"preferences": [WBBubblePreferences snapshot],
+        @"settings": [WBBubbleSettingsHook configurationSnapshot]
     };
     NSError *error = nil;
     NSURL *fileURL = [WBDiagnostics writeSnapshot:snapshot error:&error];
@@ -53,6 +57,7 @@ static void WBAttemptInstallAndBootstrap(NSUInteger attempt) {
         WBRunBootstrap(NO);
         return;
     }
+    [WBBubbleSettingsHook installIfPossible];
     BOOL hookInstalled = [WBTextBubbleStyleHook install];
     if (hookInstalled || attempt >= 40) {
         WBRunBootstrap(hookInstalled);
@@ -66,6 +71,7 @@ static void WBAttemptInstallAndBootstrap(NSUInteger attempt) {
 static void WBImageAdded(const struct mach_header *header, intptr_t slide) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([WBVersionGate allowsUIModification]) {
+            [WBBubbleSettingsHook installIfPossible];
             [WBTextBubbleStyleHook install];
         }
     });
@@ -78,7 +84,11 @@ static void WBInitialize(void) {
             return;
         }
         _dyld_register_func_for_add_image(WBImageAdded);
-        BOOL hookInstalled = [WBVersionGate allowsUIModification] && [WBTextBubbleStyleHook install];
+        BOOL activationAllowed = [WBVersionGate allowsUIModification];
+        if (activationAllowed) {
+            [WBBubbleSettingsHook installIfPossible];
+        }
+        BOOL hookInstalled = activationAllowed && [WBTextBubbleStyleHook install];
         dispatch_async(dispatch_get_main_queue(), ^{
             static dispatch_once_t onceToken;
             dispatch_once(&onceToken, ^{

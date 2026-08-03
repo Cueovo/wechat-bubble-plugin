@@ -156,6 +156,14 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
     [CATransaction commit];
 }
 
+- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection {
+    [super traitCollectionDidChange:previousTraitCollection];
+    if (!previousTraitCollection || previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle) {
+        [self setNeedsLayout];
+        [self layoutIfNeeded];
+    }
+}
+
 @end
 
 @interface WBBubbleStyleState : NSObject

@@ -11,6 +11,8 @@ static void (*WBOriginalLayoutContentView)(id, SEL);
 static void (*WBOriginalLayoutSubviews)(id, SEL);
 static void (*WBOriginalPrepareForReuse)(id, SEL);
 static BOOL WBHookInstalled;
+static id WBPreferencesObserver;
+static NSHashTable<UIView *> *WBTrackedMessageCells;
 static char WBLastStyledBubbleKey;
 
 static UIView *WBViewFromSelector(id object, NSString *selectorName) {
@@ -219,7 +221,17 @@ static void WBApplyStyle(id object, BOOL clearIfInvalid) {
         return;
     }
     UIView *cellView = object;
+    if (!WBTrackedMessageCells) {
+        WBTrackedMessageCells = [NSHashTable weakObjectsHashTable];
+    }
+    [WBTrackedMessageCells addObject:cellView];
     UIView *bubbleView = WBViewFromSelector(object, @"getBgImageView");
+    if (![WBBubbleThemeProvider isEnabled]) {
+        if (clearIfInvalid) {
+            WBClearStyle(object, bubbleView);
+        }
+        return;
+    }
     UIView *textView = WBTextViewForCell(object, cellView);
     UIView *avatarView = WBAvatarView(object, cellView);
     WBBubbleDirection direction = WBDirectionForMessage(object, avatarView, cellView);
@@ -230,7 +242,7 @@ static void WBApplyStyle(id object, BOOL clearIfInvalid) {
     if (previousBubble && previousBubble != bubbleView) {
         [WBBubbleStyler removeFromBubbleView:previousBubble];
     }
-    if (![WBBubbleThemeProvider isEnabled] || direction == WBBubbleDirectionUnknown || !tailSideKnown || !WBValidTextBubble(bubbleView, textView)) {
+    if (direction == WBBubbleDirectionUnknown || !tailSideKnown || !WBValidTextBubble(bubbleView, textView)) {
         if (clearIfInvalid) {
             WBClearStyle(object, bubbleView);
         }
@@ -262,23 +274,21 @@ static void WBRefreshMessageSegments(id object, UIView *cellView) {
     WBRefreshingMessageSegments = NO;
 }
 
-__attribute__((used)) static void WBRefreshAllVisibleMessageCells(void) {
-    Class cellClass = NSClassFromString(@"CommonMessageCellView");
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateUnattached) {
-            continue;
-        }
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            if (window.hidden) {
-                continue;
-            }
-            NSMutableArray<UIView *> *cells = [NSMutableArray array];
-            WBCollectMessageCells(window, cellClass, cells);
-            for (UIView *cell in cells) {
-                WBApplyStyle(cell, YES);
-            }
+static void WBRefreshAllVisibleMessageCells(void) {
+    for (UIView *cell in WBTrackedMessageCells.allObjects) {
+        if (cell.window) {
+            WBApplyStyle(cell, YES);
         }
     }
+}
+
+static void WBObservePreferences(void) {
+    if (WBPreferencesObserver) {
+        return;
+    }
+    WBPreferencesObserver = [NSNotificationCenter.defaultCenter addObserverForName:WBBubblePreferencesDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *notification) {
+        WBRefreshAllVisibleMessageCells();
+    }];
 }
 
 static void WBLayoutContentViewHook(id object, SEL selector) {
@@ -344,6 +354,9 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
         if (WBHookInstalled && class_getInstanceMethod(cellClass, reuseSelector)) {
             MSHookMessageEx(cellClass, reuseSelector, (IMP)WBPrepareForReuseHook, (IMP *)&WBOriginalPrepareForReuse);
         }
+        if (WBHookInstalled) {
+            WBObservePreferences();
+        }
     }
     return WBHookInstalled;
 }
@@ -351,7 +364,7 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
 + (NSDictionary<NSString *, id> *)configurationSnapshot {
     Class cellClass = NSClassFromString(@"CommonMessageCellView");
     return @{
-        @"mode": @"fixed-solid-colors",
+        @"mode": @"user-configurable-solid-colors",
         @"themeIdentifier": [WBBubbleThemeProvider themeIdentifier],
         @"enabled": @([WBBubbleThemeProvider isEnabled]),
         @"hookInstalled": @(WBHookInstalled),
@@ -363,9 +376,11 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
         @"textSelectorAvailable": @(cellClass != Nil),
         @"avatarSelectorAvailable": @(cellClass && [cellClass instancesRespondToSelector:NSSelectorFromString(@"getHeadImageView")]),
         @"directionRule": @"CMessageWrap-isSenderFromMsgWrap-plus-avatar-edge-fallback",
-        @"messageDataRead": @NO,
+        @"messageDataRead": @YES,
+        @"messageModelMetadataRead": @YES,
+        @"messageContentRead": @NO,
         @"textRead": @NO,
-        @"recursiveViewTreeScanned": @NO
+        @"recursiveViewTreeScanned": @YES
     };
 }
 

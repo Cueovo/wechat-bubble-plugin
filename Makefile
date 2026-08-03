@@ -14,6 +14,8 @@ WeChatBubble_FILES = \
 	Sources/Discovery/WBCapabilityRegistry.m \
 	Sources/Discovery/WBDiagnostics.m \
 	Sources/Styling/WBBubblePreferences.m \
+	Sources/Styling/WBBubbleSettingsHook.m \
+	Sources/Styling/WBBubbleSettingsViewController.m \
 	Sources/Styling/WBBubbleThemeProvider.m \
 	Sources/Styling/WBBubbleStyler.m \
 	Sources/Styling/WBTextBubbleStyleHook.m

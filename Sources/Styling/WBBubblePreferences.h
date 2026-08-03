@@ -8,15 +8,16 @@ FOUNDATION_EXPORT NSString * const WBBubblePreferencesDidChangeNotification;
 @interface WBBubblePreferences : NSObject
 
 + (BOOL)isEnabled;
-+ (UIColor *)fillColorForOutgoing:(BOOL)outgoing;
++ (UIColor *)fillColorForOutgoing:(BOOL)outgoing dark:(BOOL)dark;
++ (UIColor *)borderColorForOutgoing:(BOOL)outgoing dark:(BOOL)dark;
++ (NSString *)fillColorHexForOutgoing:(BOOL)outgoing dark:(BOOL)dark;
++ (NSString *)borderColorHexForOutgoing:(BOOL)outgoing dark:(BOOL)dark;
 + (CGFloat)cornerRadius;
 + (CGFloat)borderWidth;
 + (CGFloat)opacity;
-+ (NSString *)outgoingColorHex;
-+ (NSString *)incomingColorHex;
 + (void)setEnabled:(BOOL)enabled;
-+ (void)setOutgoingColor:(UIColor *)color;
-+ (void)setIncomingColor:(UIColor *)color;
++ (void)setFillColor:(UIColor *)color outgoing:(BOOL)outgoing dark:(BOOL)dark;
++ (void)setBorderColor:(UIColor *)color outgoing:(BOOL)outgoing dark:(BOOL)dark;
 + (void)setCornerRadius:(CGFloat)cornerRadius;
 + (void)setBorderWidth:(CGFloat)borderWidth;
 + (void)setOpacity:(CGFloat)opacity;
