@@ -123,13 +123,13 @@ static UIBezierPath *WBBubbleBorderPath(CGRect bounds, WBBubbleTailSide tailSide
         _shapeLayer.contentsScale = UIScreen.mainScreen.scale;
         [self.layer addSublayer:_shapeLayer];
         _borderLayer = [CAShapeLayer layer];
-        _borderLayer.contentsScale = UIScreen.mainScreen.scale;
-        _borderLayer.fillColor = UIColor.clearColor.CGColor;
-        _borderLayer.lineJoin = kCALineJoinRound;
-        _borderLayer.lineCap = kCALineCapButt;
+        [_borderLayer setContentsScale:UIScreen.mainScreen.scale];
+        [_borderLayer setFillColor:UIColor.clearColor.CGColor];
+        [_borderLayer setLineJoin:kCALineJoinRound];
+        [_borderLayer setLineCap:kCALineCapButt];
         [self.layer addSublayer:_borderLayer];
         _maskLayer = [CAShapeLayer layer];
-        _maskLayer.contentsScale = UIScreen.mainScreen.scale;
+        [_maskLayer setContentsScale:UIScreen.mainScreen.scale];
         _maskLayer.fillColor = UIColor.blackColor.CGColor;
     }
     return self;
@@ -194,7 +194,7 @@ static char WBBubbleStyleStateKey;
     overlayView.segmentPosition = segmentPosition;
     if (bubbleView.layer.mask != overlayView.maskLayer) {
         state.originalMask = bubbleView.layer.mask;
-        bubbleView.layer.mask = overlayView.maskLayer;
+        [bubbleView.layer setMask:overlayView.maskLayer];
     }
     [overlayView setNeedsLayout];
     [overlayView layoutIfNeeded];
