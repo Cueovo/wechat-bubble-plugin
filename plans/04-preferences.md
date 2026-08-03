@@ -46,6 +46,21 @@
 - 诊断格式升级为 6，记录偏好快照和设置 Hook 能力；插件版本和包版本升级为 `0.3.0`。
 - 阴影未进入 0.3.0；只有阶段 03/04 的真机滚动性能通过后才评估。
 
+## 0.3.1 设置入口修复
+
+- Build #32 真机验证确认气泡主题生效、`NewSettingViewController` 存在且设置 Hook 安装成功，但设置界面未显示“聊天气泡”入口。
+- 根因范围收敛到设置表生命周期：0.3.0 Hook `viewDidLoad` 后修改 `m_tableViewInfo`，既未刷新底层 TableView，也可能被微信后续的 `reloadTableData` 重建覆盖。
+- 0.3.1 优先 Hook 已验证为无参数 `void` 的 `reloadTableData`，在微信完成模型重建后添加插件 section；不存在该方法时才降级到 `viewDidLoad`。
+- 添加 section 后通过 `m_tableView` 或经过签名验证的 `getTableView` 获取底层表格并调用 `reloadData`，同时使用实例级重入保护避免嵌套刷新重复插入。
+- 诊断格式升级为 7；每次设置入口构建后将生命周期、表模型、私有 API 签名、section 添加和表格刷新状态回写 `diagnostics.plist`，不再把启动时的 `entryAvailable=false` 误解为最终结果。
+
+### 0.3.1 真机复测重点
+
+1. 完全结束微信、安装 0.3.1 并冷启动。
+2. 进入“我 → 设置”，确认仅出现一个“聊天气泡”入口。
+3. 退出并重复进入设置页至少 5 次，确认入口不消失、不重复。
+4. 若入口仍未出现，进入设置页后重新读取诊断文件，重点提供 `settings.lifecycleSelector`、`reason`、`tableInfoAvailable`、`apiSignaturesValid`、`entryModelAdded` 和 `tableReloaded`。
+
 ### 0.3.0 预期效果
 
 1. 微信设置页出现一个“聊天气泡”入口，重复进入不会出现多个入口。
@@ -56,7 +71,7 @@
 6. 选择“恢复插件默认主题”后，恢复阶段 03 的浅紫/浅蓝、深紫/深蓝主题并保持插件开启。
 7. 完全结束并重新打开微信后，设置保持不变；微信版本或设置入口能力不匹配时安全跳过。
 
-实现完成不等于阶段通过。必须先完成阶段 03 真机门，再使用 GitHub Actions 的原生 RootHide 0.3.0 包执行下方阶段 04 验收。
+阶段 03 已通过。阶段 04 的 0.3.0 气泡主题已生效，但设置入口真机验收失败；必须使用 GitHub Actions 的原生 RootHide 0.3.1 修复包重新执行下方阶段 04 验收。
 
 ## 验证清单
 

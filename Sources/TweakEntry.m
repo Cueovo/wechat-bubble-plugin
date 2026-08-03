@@ -27,8 +27,8 @@ static void WBRunBootstrap(BOOL hookInstalled) {
         styling[@"reason"] = @"required-runtime-capability-missing";
     }
     NSDictionary<NSString *, id> *snapshot = @{
-        @"diagnosticsFormat": @6,
-        @"pluginVersion": @"0.3.0",
+        @"diagnosticsFormat": @7,
+        @"pluginVersion": @"0.3.1",
         @"buildStage": WeChatBubbleBuildStage,
         @"timestamp": NSDate.date,
         @"process": [WBProcessGuard snapshot],

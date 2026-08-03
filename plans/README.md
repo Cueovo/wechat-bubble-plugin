@@ -42,8 +42,8 @@
 | 00 | [环境与基线](./00-environment-baseline.md) | 可复现的工具链和真机记录 | 已完成 |
 | 01 | [Theos 骨架与注入](./01-theos-bootstrap.md) | 无功能、可安全加载的原生 RootHide Tweak | 已完成 |
 | 02 | [气泡视图定位](./02-bubble-discovery.md) | 微信 8.0.60 的最小适配事实 | 已完成 |
-| 03 | [文字气泡核心](./03-text-bubble-core.md) | 固定主题可正确应用和恢复 | 进行中 |
-| 04 | [设置与持久化](./04-preferences.md) | 微信内设置、深浅色主题和恢复默认 | 进行中（0.3.0 待构建与真机验收） |
+| 03 | [文字气泡核心](./03-text-bubble-core.md) | 固定主题可正确应用和恢复 | 已完成 |
+| 04 | [设置与持久化](./04-preferences.md) | 微信内设置、深浅色主题和恢复默认 | 进行中（0.3.1 修复入口，待真机验收） |
 | 05 | [安全与兼容](./05-safety-compatibility.md) | 安全模式、版本门控、诊断和性能达标 | 未开始 |
 | 06 | [发布候选](./06-release-candidate.md) | 可安装、升级、卸载的 MVP RootHide `.deb` | 未开始 |
 

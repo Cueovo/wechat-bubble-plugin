@@ -15,32 +15,44 @@
 }
 
 + (NSURL *)writeSnapshot:(NSDictionary<NSString *, id> *)snapshot error:(NSError **)error {
-    NSURL *fileURL = [self diagnosticsFileURL:error];
-    if (!fileURL) {
-        return nil;
+    @synchronized(self) {
+        NSURL *fileURL = [self diagnosticsFileURL:error];
+        if (!fileURL) {
+            return nil;
+        }
+        NSData *data = [NSPropertyListSerialization dataWithPropertyList:snapshot format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
+        if (!data || ![data writeToURL:fileURL options:NSDataWritingAtomic error:error]) {
+            return nil;
+        }
+        return fileURL;
     }
-    NSData *data = [NSPropertyListSerialization dataWithPropertyList:snapshot format:NSPropertyListXMLFormat_v1_0 options:0 error:error];
-    if (!data || ![data writeToURL:fileURL options:NSDataWritingAtomic error:error]) {
-        return nil;
+}
+
++ (BOOL)updateSection:(NSString *)sectionName entries:(NSDictionary<NSString *, id> *)entries error:(NSError **)error {
+    @synchronized(self) {
+        NSURL *fileURL = [self diagnosticsFileURL:error];
+        NSData *data = fileURL ? [NSData dataWithContentsOfURL:fileURL options:0 error:error] : nil;
+        if (!data) {
+            return NO;
+        }
+        NSDictionary<NSString *, id> *storedSnapshot = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:nil error:error];
+        if (![storedSnapshot isKindOfClass:NSDictionary.class]) {
+            return NO;
+        }
+        NSMutableDictionary<NSString *, id> *snapshot = [storedSnapshot mutableCopy];
+        NSMutableDictionary<NSString *, id> *section = [snapshot[sectionName] mutableCopy] ?: [NSMutableDictionary dictionary];
+        [section addEntriesFromDictionary:entries];
+        snapshot[sectionName] = section;
+        return [self writeSnapshot:snapshot error:error] != nil;
     }
-    return fileURL;
 }
 
 + (BOOL)updateDiscovery:(NSDictionary<NSString *, id> *)update error:(NSError **)error {
-    NSURL *fileURL = [self diagnosticsFileURL:error];
-    NSData *data = fileURL ? [NSData dataWithContentsOfURL:fileURL options:0 error:error] : nil;
-    if (!data) {
-        return NO;
-    }
-    NSDictionary<NSString *, id> *storedSnapshot = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:nil error:error];
-    if (![storedSnapshot isKindOfClass:NSDictionary.class]) {
-        return NO;
-    }
-    NSMutableDictionary<NSString *, id> *snapshot = [storedSnapshot mutableCopy];
-    NSMutableDictionary<NSString *, id> *discovery = [snapshot[@"discovery"] mutableCopy] ?: [NSMutableDictionary dictionary];
-    [discovery addEntriesFromDictionary:update];
-    snapshot[@"discovery"] = discovery;
-    return [self writeSnapshot:snapshot error:error] != nil;
+    return [self updateSection:@"discovery" entries:update error:error];
+}
+
++ (BOOL)updateSettings:(NSDictionary<NSString *, id> *)update error:(NSError **)error {
+    return [self updateSection:@"settings" entries:update error:error];
 }
 
 @end
