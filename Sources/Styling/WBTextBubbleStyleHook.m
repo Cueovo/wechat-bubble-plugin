@@ -101,6 +101,17 @@ static void WBCollectMessageCells(UIView *rootView, Class cellClass, NSMutableAr
     }
 }
 
+static UIView *WBMessageCellRoot(UIView *cellView) {
+    UIView *rootView = cellView;
+    for (NSUInteger depth = 0; depth < 5 && rootView.superview; depth++) {
+        rootView = rootView.superview;
+        if ([rootView isKindOfClass:UITableView.class]) {
+            break;
+        }
+    }
+    return rootView;
+}
+
 static WBBubbleSegmentPosition WBSegmentPositionForCell(id object, UIView *cellView) {
     Class cellClass = NSClassFromString(@"CommonMessageCellView");
     if (!cellClass || !WBMessageWrapForCell(object)) {
@@ -231,6 +242,25 @@ static void WBApplyStyle(id object, BOOL clearIfInvalid) {
     }
 }
 
+static BOOL WBRefreshingMessageSegments;
+
+static void WBRefreshMessageSegments(id object, UIView *cellView) {
+    if (WBRefreshingMessageSegments || !cellView.window || !WBMessageWrapForCell(object)) {
+        return;
+    }
+    Class cellClass = NSClassFromString(@"CommonMessageCellView");
+    UIView *rootView = WBMessageCellRoot(cellView);
+    NSMutableArray<UIView *> *cells = [NSMutableArray array];
+    WBCollectMessageCells(rootView, cellClass, cells);
+    WBRefreshingMessageSegments = YES;
+    for (UIView *candidate in cells) {
+        if (candidate.window && WBSameMessage(object, candidate)) {
+            WBApplyStyle(candidate, NO);
+        }
+    }
+    WBRefreshingMessageSegments = NO;
+}
+
 static void WBLayoutContentViewHook(id object, SEL selector) {
     if (!WBOriginalLayoutContentView) {
         return;
@@ -239,7 +269,10 @@ static void WBLayoutContentViewHook(id object, SEL selector) {
     WBOriginalLayoutContentView(object, selector);
     WBApplyStyle(object, YES);
     dispatch_async(dispatch_get_main_queue(), ^{
-        WBApplyStyle(object, NO);
+        UIView *cellView = [object isKindOfClass:UIView.class] ? object : nil;
+        if (cellView.window) {
+            WBRefreshMessageSegments(object, cellView);
+        }
     });
 }
 
@@ -249,6 +282,10 @@ static void WBLayoutSubviewsHook(id object, SEL selector) {
     }
     WBOriginalLayoutSubviews(object, selector);
     WBApplyStyle(object, NO);
+    UIView *cellView = [object isKindOfClass:UIView.class] ? object : nil;
+    if (cellView.window) {
+        WBRefreshMessageSegments(object, cellView);
+    }
 }
 
 static void WBPrepareForReuseHook(id object, SEL selector) {

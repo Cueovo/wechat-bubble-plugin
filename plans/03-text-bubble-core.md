@@ -83,9 +83,15 @@
 - 中间片段只绘制左右外侧边框；底部片段绘制左右、底部及底部圆角，不绘制顶部横线。
 - 单片气泡继续绘制完整闭合描边，使短文本和超长文本保持一致的紫色外轮廓。
 
-## 0.1.6 真机验证步骤
+## 0.1.7 修复
 
-1. 安装 GitHub Actions 生成的原生 RootHide `0.1.6` 包，完全结束并重新打开微信。
+- 任一长消息片段完成布局时，统一重新计算当前可见的全部同消息片段，修复快速滚动时前一片段保留错误底部圆角的问题。
+- `layoutSubviews` 同步刷新同消息片段拓扑，不再依赖各 Cell 恰好按从上到下的顺序布局。
+- 异步刷新前检查 Common Cell 仍在 window 中，防止已经离屏的过期任务覆盖复用后的样式状态。
+
+## 0.1.7 真机验证步骤
+
+1. 安装 GitHub Actions 生成的原生 RootHide `0.1.7` 包，完全结束并重新打开微信。
 2. 先确认聊天列表和微信冷启动正常，再进入专用测试会话。
 3. 首次进入会话时确认首屏文字气泡直接呈现主题色，不应先出现默认绿色再切换。
 4. 确认接收文字为浅蓝、发送文字为浅紫，左右尾巴、5pt 圆角和描边完整，外围没有绿色残边。
@@ -93,7 +99,7 @@
 6. 覆盖图片、语音、视频、文件、位置和转账，确认均保持微信原样。
 7. 切换系统浅色/深色模式并重新进入会话，确认颜色正确且文字仍可读。
 8. 长按、复制、点击链接、进入退出会话和前后台切换，确认交互与 Cell 高度不变。
-9. 检查 `Library/Caches/WeChatBubble/diagnostics.plist`：`pluginVersion=0.1.6`、`diagnosticsFormat=4`、`versionGate.uiModificationAllowed=true`、`styling.hookInstalled=true`、`discovery.explorationHookInstalled=false`。
+9. 检查 `Library/Caches/WeChatBubble/diagnostics.plist`：`pluginVersion=0.1.7`、`diagnosticsFormat=4`、`versionGate.uiModificationAllowed=true`、`styling.hookInstalled=true`、`discovery.explorationHookInstalled=false`。
 10. 若出现启动异常、默认绿色闪现、白色闪现、绿色残边、尾巴反向、气泡裁剪、颜色串位或非文字消息变化，立即卸载插件并保留上述诊断文件。
 
 ## 测试场景
