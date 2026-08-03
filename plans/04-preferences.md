@@ -53,6 +53,7 @@
 - 0.3.1 优先 Hook 已验证为无参数 `void` 的 `reloadTableData`，在微信完成模型重建后添加插件 section；不存在该方法时才降级到 `viewDidLoad`。
 - 添加 section 后通过 `m_tableView` 或经过签名验证的 `getTableView` 获取底层表格并调用 `reloadData`，同时使用实例级重入保护避免嵌套刷新重复插入。
 - 诊断格式升级为 7；每次设置入口构建后将生命周期、表模型、私有 API 签名、section 添加和表格刷新状态回写 `diagnostics.plist`，不再把启动时的 `entryAvailable=false` 误解为最终结果。
+- GitHub Actions Build #35 已通过 RootHide 编译、包校验和 artifact 上传；对应提交 `32e131b`，待真机入口复测。
 
 ### 0.3.1 真机复测重点
 
