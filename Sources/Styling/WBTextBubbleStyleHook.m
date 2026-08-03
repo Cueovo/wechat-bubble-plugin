@@ -10,10 +10,24 @@
 static void (*WBOriginalLayoutContentView)(id, SEL);
 static void (*WBOriginalLayoutSubviews)(id, SEL);
 static void (*WBOriginalPrepareForReuse)(id, SEL);
+static void (*WBOriginalSetImage)(id, SEL, id);
+static void (*WBOriginalSetAnimatedImage)(id, SEL, id);
 static BOOL WBHookInstalled;
+static BOOL WBArtworkHooksInstalled;
 static id WBPreferencesObserver;
 static NSHashTable<UIView *> *WBTrackedMessageCells;
 static char WBLastStyledBubbleKey;
+
+static BOOL WBValidObjectSetterMethod(Method method) {
+    if (!method || method_getNumberOfArguments(method) != 3) {
+        return NO;
+    }
+    char returnType[8] = {0};
+    char argumentType[8] = {0};
+    method_getReturnType(method, returnType, sizeof(returnType));
+    method_getArgumentType(method, 2, argumentType, sizeof(argumentType));
+    return returnType[0] == 'v' && argumentType[0] == '@';
+}
 
 static UIView *WBViewFromSelector(id object, NSString *selectorName) {
     SEL selector = NSSelectorFromString(selectorName);
@@ -325,6 +339,18 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
     }
 }
 
+static void WBSetImageHook(id object, SEL selector, id image) {
+    if (![WBBubbleStyler captureArtworkUpdate:image forBubbleView:object animated:NO] && WBOriginalSetImage) {
+        WBOriginalSetImage(object, selector, image);
+    }
+}
+
+static void WBSetAnimatedImageHook(id object, SEL selector, id image) {
+    if (![WBBubbleStyler captureArtworkUpdate:image forBubbleView:object animated:YES] && WBOriginalSetAnimatedImage) {
+        WBOriginalSetAnimatedImage(object, selector, image);
+    }
+}
+
 @implementation WBTextBubbleStyleHook
 
 + (BOOL)install {
@@ -355,6 +381,17 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
             MSHookMessageEx(cellClass, reuseSelector, (IMP)WBPrepareForReuseHook, (IMP *)&WBOriginalPrepareForReuse);
         }
         if (WBHookInstalled) {
+            SEL setImageSelector = NSSelectorFromString(@"setImage:");
+            Method setImageMethod = class_getInstanceMethod(backgroundClass, setImageSelector);
+            if (WBValidObjectSetterMethod(setImageMethod)) {
+                MSHookMessageEx(backgroundClass, setImageSelector, (IMP)WBSetImageHook, (IMP *)&WBOriginalSetImage);
+            }
+            SEL setAnimatedImageSelector = NSSelectorFromString(@"setAnimatedImage:");
+            Method setAnimatedImageMethod = class_getInstanceMethod(backgroundClass, setAnimatedImageSelector);
+            if (WBValidObjectSetterMethod(setAnimatedImageMethod)) {
+                MSHookMessageEx(backgroundClass, setAnimatedImageSelector, (IMP)WBSetAnimatedImageHook, (IMP *)&WBOriginalSetAnimatedImage);
+            }
+            WBArtworkHooksInstalled = WBOriginalSetImage != NULL && (!setAnimatedImageMethod || WBOriginalSetAnimatedImage != NULL);
             WBObservePreferences();
         }
     }
@@ -364,8 +401,9 @@ static void WBPrepareForReuseHook(id object, SEL selector) {
 + (NSDictionary<NSString *, id> *)configurationSnapshot {
     Class cellClass = NSClassFromString(@"CommonMessageCellView");
     return @{
-        @"mode": @"user-configurable-material",
+        @"mode": @"user-configurable-colorless-glass",
         @"themeIdentifier": [WBBubbleThemeProvider themeIdentifier],
+        @"artworkHooksInstalled": @(WBArtworkHooksInstalled),
         @"requestedMaterial": [WBBubbleThemeProvider materialIdentifier],
         @"resolvedMaterialBackend": [WBBubbleThemeProvider resolvedMaterialBackend],
         @"nativeLiquidGlassAvailable": @([WBBubbleThemeProvider nativeLiquidGlassAvailable]),

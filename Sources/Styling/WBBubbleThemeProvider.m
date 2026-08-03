@@ -24,11 +24,11 @@
     if (![self usesGlassMaterial]) {
         return @"solid";
     }
-    return [self nativeLiquidGlassAvailable] ? @"native-uiglass-effect" : @"compatibility-blur";
+    return [self nativeLiquidGlassAvailable] ? @"native-uiglass-effect" : @"compatibility-colorless-lens";
 }
 
 + (NSString *)themeIdentifier {
-    return [NSString stringWithFormat:@"stage05-material-v1-%@", [self resolvedMaterialBackend]];
+    return [NSString stringWithFormat:@"stage05-material-v2-%@", [self resolvedMaterialBackend]];
 }
 
 + (UIColor *)fillColorForDirection:(WBBubbleDirection)direction traitCollection:(UITraitCollection *)traitCollection {

@@ -19,6 +19,7 @@ typedef NS_ENUM(NSInteger, WBBubbleSegmentPosition) {
 @interface WBBubbleStyler : NSObject
 
 + (BOOL)applyToBubbleView:(UIView *)bubbleView direction:(WBBubbleDirection)direction tailSide:(WBBubbleTailSide)tailSide segmentPosition:(WBBubbleSegmentPosition)segmentPosition;
++ (BOOL)captureArtworkUpdate:(nullable id)artwork forBubbleView:(UIView *)bubbleView animated:(BOOL)animated;
 + (void)removeFromBubbleView:(UIView *)bubbleView;
 
 @end

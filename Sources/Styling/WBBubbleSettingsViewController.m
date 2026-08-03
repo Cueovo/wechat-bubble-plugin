@@ -37,11 +37,12 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    BOOL glass = [WBBubblePreferences material] == WBBubbleMaterialGlass;
     switch (section) {
         case 0: return 2;
         case 1:
-        case 2: return 4;
-        case 3: return 3;
+        case 2: return glass ? 0 : 4;
+        case 3: return glass ? 1 : 3;
         case 4: return 1;
         case 5: return 2;
         default: return 0;
@@ -49,14 +50,22 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    BOOL glass = [WBBubblePreferences material] == WBBubbleMaterialGlass;
     switch (section) {
         case 0: return @"功能";
-        case 1: return @"浅色模式";
-        case 2: return @"深色模式";
-        case 3: return @"外观";
+        case 1: return glass ? nil : @"浅色模式";
+        case 2: return glass ? nil : @"深色模式";
+        case 3: return glass ? @"玻璃外观" : @"外观";
         case 4: return @"安全与恢复";
         default: return nil;
     }
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if (section == 0 && [WBBubblePreferences material] == WBBubbleMaterialGlass) {
+        return [WBBubbleThemeProvider nativeLiquidGlassAvailable] ? @"原生 Liquid Glass 不使用纯色主题颜色。" : @"兼容玻璃使用无色背景采样、镜片放大、边缘高光和内阴影，不使用纯色主题颜色。";
+    }
+    return nil;
 }
 
 - (UITableViewCell *)baseCellWithTitle:(NSString *)title detail:(NSString *)detail {
