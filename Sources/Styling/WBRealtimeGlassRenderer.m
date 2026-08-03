@@ -426,7 +426,8 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     NSMutableArray<CALayer *> *hiddenLayers = [NSMutableArray array];
     NSMutableArray<NSNumber *> *savedOpacities = [NSMutableArray array];
     NSHashTable<UIView *> *cells = [NSHashTable weakObjectsHashTable];
-    for (WBRealtimeGlassRenderer *renderer in self.renderers.allObjects) {
+    NSArray<WBRealtimeGlassRenderer *> *registeredRenderers = self.renderers.allObjects;
+    for (WBRealtimeGlassRenderer *renderer in registeredRenderers) {
         UIView *cell = WBRealtimeMessageCellForView(renderer.targetView);
         if (cell) {
             [cells addObject:cell];
@@ -461,7 +462,7 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         [savedOpacities addObject:@(layer.opacity)];
         layer.opacity = 0.0f;
     };
-    for (WBRealtimeGlassRenderer *renderer in renderers) {
+    for (WBRealtimeGlassRenderer *renderer in registeredRenderers) {
         hideLayer(renderer.targetView.layer);
     }
     for (UIView *cell in cells.allObjects) {
