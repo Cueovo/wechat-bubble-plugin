@@ -64,9 +64,15 @@
 - 尾巴方向与消息收发方向使用同一稳定模型结果；头像只作为旧版本无消息模型时的降级判断。
 - 复用清理和布局清理移动到 Common Cell 层，确保切换聊天窗口和快速滚动时旧气泡状态不会沿用。
 
-## 0.1.3 真机验证步骤
+## 0.1.4 修复
 
-1. 安装 GitHub Actions 生成的原生 RootHide `0.1.3` 包，完全结束并重新打开微信。
+- 移除固定的背景/文字高度差限制，避免长文本异步布局后被错误视为无效气泡并恢复原生绿色。
+- 文字气泡识别改为结构和可见性校验，仅要求 Common Cell 中存在可见 `YYAsyncImageView` 与 `RichTextView`。
+- `layoutSubviews` 的暂态无效结果不再立即移除已存在样式，避免长文本异步布局期间回退到绿色；只有布局重建或复用清理才会移除旧样式。
+
+## 0.1.4 真机验证步骤
+
+1. 安装 GitHub Actions 生成的原生 RootHide `0.1.4` 包，完全结束并重新打开微信。
 2. 先确认聊天列表和微信冷启动正常，再进入专用测试会话。
 3. 首次进入会话时确认首屏文字气泡直接呈现主题色，不应先出现默认绿色再切换。
 4. 确认接收文字为浅蓝、发送文字为浅紫，左右尾巴、5pt 圆角和描边完整，外围没有绿色残边。
@@ -74,7 +80,7 @@
 6. 覆盖图片、语音、视频、文件、位置和转账，确认均保持微信原样。
 7. 切换系统浅色/深色模式并重新进入会话，确认颜色正确且文字仍可读。
 8. 长按、复制、点击链接、进入退出会话和前后台切换，确认交互与 Cell 高度不变。
-9. 检查 `Library/Caches/WeChatBubble/diagnostics.plist`：`pluginVersion=0.1.3`、`diagnosticsFormat=4`、`versionGate.uiModificationAllowed=true`、`styling.hookInstalled=true`、`discovery.explorationHookInstalled=false`。
+9. 检查 `Library/Caches/WeChatBubble/diagnostics.plist`：`pluginVersion=0.1.4`、`diagnosticsFormat=4`、`versionGate.uiModificationAllowed=true`、`styling.hookInstalled=true`、`discovery.explorationHookInstalled=false`。
 10. 若出现启动异常、默认绿色闪现、白色闪现、绿色残边、尾巴反向、气泡裁剪、颜色串位或非文字消息变化，立即卸载插件并保留上述诊断文件。
 
 ## 测试场景

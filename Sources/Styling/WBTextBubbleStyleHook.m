@@ -87,29 +87,19 @@ static WBBubbleTailSide WBTailSideForDirection(WBBubbleDirection direction) {
     return direction == WBBubbleDirectionIncoming ? WBBubbleTailSideLeft : WBBubbleTailSideRight;
 }
 
-static BOOL WBValidTextBubble(UIView *bubbleView, UIView *textView, WBBubbleTailSide tailSide) {
+static BOOL WBValidTextBubble(UIView *bubbleView, UIView *textView) {
     Class backgroundClass = NSClassFromString(@"YYAsyncImageView");
     Class textClass = NSClassFromString(@"RichTextView");
     if (!backgroundClass || !textClass || !bubbleView || !textView || ![bubbleView isKindOfClass:backgroundClass] || ![textView isKindOfClass:textClass]) {
         return NO;
     }
-    CGFloat width = CGRectGetWidth(bubbleView.bounds);
-    CGFloat height = CGRectGetHeight(bubbleView.bounds);
-    CGFloat widthPadding = width - CGRectGetWidth(textView.bounds);
-    CGFloat heightPadding = height - CGRectGetHeight(textView.bounds);
-    if (width < 30.0 || height < 30.0 || widthPadding < 12.0 || widthPadding > 60.0 || heightPadding < 10.0 || heightPadding > 50.0) {
+    CGRect bubbleBounds = bubbleView.bounds;
+    if (CGRectGetWidth(bubbleBounds) < 30.0 || CGRectGetHeight(bubbleBounds) < 20.0 || bubbleView.hidden || bubbleView.alpha <= 0.01 || textView.hidden || textView.alpha <= 0.01) {
         return NO;
     }
     if ([textView isDescendantOfView:bubbleView]) {
         CGRect textRect = [textView convertRect:textView.bounds toView:bubbleView];
-        CGRect safeRect = CGRectInset(bubbleView.bounds, 4.0, 3.0);
-        if (tailSide == WBBubbleTailSideLeft) {
-            safeRect.origin.x += 5.0;
-            safeRect.size.width -= 5.0;
-        } else {
-            safeRect.size.width -= 5.0;
-        }
-        if (!CGRectContainsRect(safeRect, textRect)) {
+        if (CGRectIsEmpty(textRect) || !CGRectIntersectsRect(CGRectInset(bubbleBounds, -8.0, -8.0), textRect)) {
             return NO;
         }
     }
@@ -127,7 +117,7 @@ static void WBClearStyle(id object, UIView *bubbleView) {
     objc_setAssociatedObject(object, &WBLastStyledBubbleKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-static void WBApplyStyle(id object) {
+static void WBApplyStyle(id object, BOOL clearIfInvalid) {
     if (!NSThread.isMainThread || ![object isKindOfClass:UIView.class]) {
         return;
     }
@@ -142,8 +132,10 @@ static void WBApplyStyle(id object) {
     if (previousBubble && previousBubble != bubbleView) {
         [WBBubbleStyler removeFromBubbleView:previousBubble];
     }
-    if (![WBBubbleThemeProvider isEnabled] || direction == WBBubbleDirectionUnknown || !tailSideKnown || !WBValidTextBubble(bubbleView, textView, tailSide)) {
-        WBClearStyle(object, bubbleView);
+    if (![WBBubbleThemeProvider isEnabled] || direction == WBBubbleDirectionUnknown || !tailSideKnown || !WBValidTextBubble(bubbleView, textView)) {
+        if (clearIfInvalid) {
+            WBClearStyle(object, bubbleView);
+        }
         return;
     }
     if ([WBBubbleStyler applyToBubbleView:bubbleView direction:direction tailSide:tailSide]) {
@@ -159,7 +151,7 @@ static void WBLayoutContentViewHook(id object, SEL selector) {
     }
     WBClearStyle(object, nil);
     WBOriginalLayoutContentView(object, selector);
-    WBApplyStyle(object);
+    WBApplyStyle(object, YES);
 }
 
 static void WBLayoutSubviewsHook(id object, SEL selector) {
@@ -167,7 +159,7 @@ static void WBLayoutSubviewsHook(id object, SEL selector) {
         return;
     }
     WBOriginalLayoutSubviews(object, selector);
-    WBApplyStyle(object);
+    WBApplyStyle(object, NO);
 }
 
 static void WBPrepareForReuseHook(id object, SEL selector) {
