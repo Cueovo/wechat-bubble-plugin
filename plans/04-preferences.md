@@ -165,6 +165,21 @@
 3. 切出聊天再进入、切换横竖屏或窗口尺寸后确认会产生一次新捕获，随后继续复用；新气泡不得采到旧消息文字或头像。
 4. 如果仍有坐标错位，导出格式 20 诊断并附一张能同时看到气泡内外相同背景特征的截图，用于区分 Y 翻转、窗口原点或壁纸 contentMode 问题。
 
+## 0.7.2 壁纸隔离与方向检测修复
+
+- 0.7.1 真机诊断证明性能修复有效：`captureCount=1`、`renderedFrameCount=624`、`backdropReuseCount=624`，不存在每帧重新捕获；但同时记录到 `orientationCalibrated=false`、`orientationFallbackUsed=true`、`textureYFlipped=true`。单像素校准失败后强制翻转导致错误窗口区域进入气泡，截图中表现为输入栏表情按钮出现在消息气泡右上角。
+- 0.7.2 将方向校准改为扫描纹理左侧完整标记带，分别统计顶部红色和底部绿色标记的像素数量及平均行号；只有两个标记均达到阈值才接受检测结果，失败时不再盲目强制 Y 翻转。
+- 捕获时优先识别覆盖聊天区域的大型、非消息 Cell `UIImageView` 作为壁纸源，并在捕获事务中隐藏通向该壁纸分支之外的兄弟视图。这样输入栏按钮、头像、导航栏和消息内容不会进入共享折射纹理；无法识别独立壁纸视图时才回退到排除消息 Cell 的窗口捕获。
+- Metal 输出在气泡 mask 内改为完全不透明，避免成功渲染后底层 UIKit backdrop 仍以 2%–10% 混入错误位置的系统控件。
+- 诊断格式升级到 21，新增 `redMarkerPixels`、`greenMarkerPixels`、`redMarkerRow`、`greenMarkerRow`、`captureSourceClass`、`captureSourceFrame` 和 `lastSurfaceFrames`。这些字段可以直接核对每个气泡的窗口坐标、实际采样 Y 区间和捕获源。
+
+### 0.7.2 真机复测
+
+1. 同一月球壁纸下确认“我”气泡右上角不再出现输入栏表情按钮，气泡内外陨石坑纹理位置连续。
+2. 诊断中优先应看到 `capturePolicy=isolated-wallpaper-capture-once-live-window-uv`、`captureSourceClass` 为背景图视图、`orientationCalibrated=true` 且 `orientationFallbackUsed=false`。
+3. 如果方向检测仍回退，检查红绿标记像素数和平均行号；`lastSurfaceFrames` 应显示该气泡 `frameY` 与屏幕实际位置一致，`sampledTop`/`sampledBottom` 不得指向底部输入栏。
+4. 连续滚动 30 秒，`captureCount` 仍应保持不变，`backdropReuseCount` 和 `renderedFrameCount` 持续增长。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。

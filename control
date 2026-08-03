@@ -1,6 +1,6 @@
 Package: com.bi8bo.wechat.bubble
 Name: WeChat Bubble
-Version: 0.7.1
+Version: 0.7.2
 Architecture: iphoneos-arm64e
 Description: Native RootHide text bubble silhouette styling MVP for WeChat 8.0.60.35.
 Maintainer: Cueovo

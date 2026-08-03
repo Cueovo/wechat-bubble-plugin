@@ -24,7 +24,14 @@ static NSUInteger WBRealtimeBackdropReuseCount;
 static BOOL WBRealtimeTextureYFlipped;
 static BOOL WBRealtimeOrientationCalibrated;
 static BOOL WBRealtimeOrientationFallbackUsed;
-static NSString *WBRealtimeCapturePolicy = @"capture-once-reuse-with-live-window-uv";
+static NSUInteger WBRealtimeRedMarkerPixels;
+static NSUInteger WBRealtimeGreenMarkerPixels;
+static double WBRealtimeRedMarkerRow;
+static double WBRealtimeGreenMarkerRow;
+static NSArray<NSDictionary *> *WBRealtimeLastSurfaceFrames = @[];
+static NSString *WBRealtimeCaptureSourceClass = @"window";
+static NSString *WBRealtimeCaptureSourceFrame = @"unknown";
+static NSString *WBRealtimeCapturePolicy = @"isolated-wallpaper-capture-once-live-window-uv";
 
 static id<MTLDevice> WBRealtimeDevice;
 static id<MTLRenderPipelineState> WBRealtimePipeline;
@@ -126,6 +133,49 @@ static UIScrollView *WBRealtimeScrollContainerForView(UIView *view) {
     return nil;
 }
 
+static BOOL WBRealtimeViewIsInsideMessageCell(UIView *view) {
+    UIView *candidate = view;
+    while (candidate) {
+        if ([NSStringFromClass(candidate.class) containsString:@"CommonMessageCellView"]) {
+            return YES;
+        }
+        candidate = candidate.superview;
+    }
+    return NO;
+}
+
+static void WBRealtimeFindBackdropImageView(UIView *root, UIWindow *window, UIView **bestView, CGFloat *bestScore) {
+    if (!root || root.hidden || root.alpha < 0.01) {
+        return;
+    }
+    if ([root isKindOfClass:UIImageView.class] && !WBRealtimeViewIsInsideMessageCell(root)) {
+        UIImageView *imageView = (UIImageView *)root;
+        CGRect frame = [root convertRect:root.bounds toView:window];
+        CGRect intersection = CGRectIntersection(frame, window.bounds);
+        CGFloat windowArea = CGRectGetWidth(window.bounds) * CGRectGetHeight(window.bounds);
+        CGFloat coverage = !CGRectIsNull(intersection) && windowArea > 0.0 ? CGRectGetWidth(intersection) * CGRectGetHeight(intersection) / windowArea : 0.0;
+        BOOL hasImageContent = imageView.image != nil || imageView.layer.contents != nil;
+        if (hasImageContent && coverage >= 0.45 && CGRectGetWidth(intersection) >= CGRectGetWidth(window.bounds) * 0.9 && CGRectGetHeight(intersection) >= CGRectGetHeight(window.bounds) * 0.45) {
+            NSString *className = NSStringFromClass(root.class).lowercaseString;
+            CGFloat score = coverage + (([className containsString:@"background"] || [className containsString:@"wallpaper"]) ? 0.15 : 0.0);
+            if (score > *bestScore) {
+                *bestView = root;
+                *bestScore = score;
+            }
+        }
+    }
+    for (UIView *subview in root.subviews) {
+        WBRealtimeFindBackdropImageView(subview, window, bestView, bestScore);
+    }
+}
+
+static UIView *WBRealtimeBackdropImageView(UIWindow *window) {
+    UIView *bestView = nil;
+    CGFloat bestScore = 0.0;
+    WBRealtimeFindBackdropImageView(window, window, &bestView, &bestScore);
+    return bestView;
+}
+
 typedef struct {
     vector_float2 windowSize;
     vector_float2 glassOrigin;
@@ -210,8 +260,15 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"textureYFlipped": @(WBRealtimeTextureYFlipped),
             @"orientationCalibrated": @(WBRealtimeOrientationCalibrated),
             @"orientationFallbackUsed": @(WBRealtimeOrientationFallbackUsed),
+            @"redMarkerPixels": @(WBRealtimeRedMarkerPixels),
+            @"greenMarkerPixels": @(WBRealtimeGreenMarkerPixels),
+            @"redMarkerRow": @(WBRealtimeRedMarkerRow),
+            @"greenMarkerRow": @(WBRealtimeGreenMarkerRow),
+            @"lastSurfaceFrames": WBRealtimeLastSurfaceFrames,
+            @"captureSourceClass": WBRealtimeCaptureSourceClass,
+            @"captureSourceFrame": WBRealtimeCaptureSourceFrame,
             @"capturePolicy": WBRealtimeCapturePolicy,
-            @"samplingMode": @"cached-shared-window-backdrop-live-metal-uv-sdf",
+            @"samplingMode": @"isolated-wallpaper-or-window-backdrop-live-metal-uv-sdf",
             @"updatedAt": NSDate.date
         };
     }
@@ -396,55 +453,99 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
     CGContextScaleCTM(context, _captureScale, _captureScale);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
+    void (^hideLayer)(CALayer *) = ^(CALayer *layer) {
+        if (!layer || [hiddenLayers containsObject:layer]) {
+            return;
+        }
+        [hiddenLayers addObject:layer];
+        [savedOpacities addObject:@(layer.opacity)];
+        layer.opacity = 0.0f;
+    };
+    for (WBRealtimeGlassRenderer *renderer in renderers) {
+        hideLayer(renderer.targetView.layer);
+    }
     for (UIView *cell in cells.allObjects) {
-        [hiddenLayers addObject:cell.layer];
-        [savedOpacities addObject:@(cell.layer.opacity)];
-        cell.layer.opacity = 0.0f;
+        hideLayer(cell.layer);
+    }
+    UIView *backdropSource = WBRealtimeBackdropImageView(window);
+    if (backdropSource) {
+        UIView *branch = backdropSource;
+        while (branch.superview) {
+            UIView *parent = branch.superview;
+            for (UIView *sibling in parent.subviews) {
+                if (sibling != branch) {
+                    hideLayer(sibling.layer);
+                }
+            }
+            branch = parent;
+        }
+    }
+    @synchronized(WBRealtimeGlassRenderer.class) {
+        WBRealtimeCaptureSourceClass = backdropSource ? NSStringFromClass(backdropSource.class) : @"window";
+        WBRealtimeCaptureSourceFrame = backdropSource ? NSStringFromCGRect([backdropSource convertRect:backdropSource.bounds toView:window]) : NSStringFromCGRect(window.bounds);
     }
     CALayer *topMarker = nil;
     CALayer *bottomMarker = nil;
     if (!_orientationCalibrated) {
         CGRect windowBounds = window.bounds;
         topMarker = [CALayer layer];
-        topMarker.frame = CGRectMake(CGRectGetMinX(windowBounds) + 2.0, CGRectGetMinY(windowBounds) + 2.0, 8.0, 8.0);
+        topMarker.frame = CGRectMake(CGRectGetMinX(windowBounds) + 2.0, CGRectGetMinY(windowBounds) + 2.0, 12.0, 12.0);
         topMarker.backgroundColor = UIColor.redColor.CGColor;
         bottomMarker = [CALayer layer];
-        bottomMarker.frame = CGRectMake(CGRectGetMinX(windowBounds) + 2.0, CGRectGetMaxY(windowBounds) - 10.0, 8.0, 8.0);
+        bottomMarker.frame = CGRectMake(CGRectGetMinX(windowBounds) + 2.0, CGRectGetMaxY(windowBounds) - 14.0, 12.0, 12.0);
         bottomMarker.backgroundColor = UIColor.greenColor.CGColor;
         [window.layer addSublayer:topMarker];
         [window.layer addSublayer:bottomMarker];
+        [window.layer layoutIfNeeded];
     }
     BOOL succeeded = YES;
     @try {
         [window.layer renderInContext:context];
         CGContextFlush(context);
-        if (topMarker && _pixelWidth > 8 && _pixelHeight > 8) {
-            size_t sampleX = MIN(_pixelWidth - 1, (size_t)llround(6.0 * _captureScale));
-            size_t upperY = MIN(_pixelHeight - 1, (size_t)llround(6.0 * _captureScale));
-            size_t lowerY = _pixelHeight - 1 - upperY;
+        if (topMarker && _pixelWidth > 16 && _pixelHeight > 16) {
             uint8_t *bytes = baseAddress;
-            uint8_t *upperPixel = bytes + upperY * bytesPerRow + sampleX * 4;
-            uint8_t *lowerPixel = bytes + lowerY * bytesPerRow + sampleX * 4;
-            BOOL upperIsRed = upperPixel[2] > 200 && upperPixel[1] < 80 && upperPixel[0] < 80;
-            BOOL upperIsGreen = upperPixel[1] > 100 && upperPixel[2] < 80 && upperPixel[0] < 80;
-            BOOL lowerIsRed = lowerPixel[2] > 200 && lowerPixel[1] < 80 && lowerPixel[0] < 80;
-            BOOL lowerIsGreen = lowerPixel[1] > 100 && lowerPixel[2] < 80 && lowerPixel[0] < 80;
-            if (upperIsRed && lowerIsGreen) {
-                _textureYFlipped = NO;
-                _orientationCalibrated = YES;
-                _orientationFallbackUsed = NO;
-            } else if (upperIsGreen && lowerIsRed) {
-                _textureYFlipped = YES;
+            size_t scanWidth = MIN(_pixelWidth, (size_t)ceil(20.0 * _captureScale));
+            size_t scanBandHeight = MIN(_pixelHeight / 2, (size_t)ceil(24.0 * _captureScale));
+            NSUInteger redCount = 0;
+            NSUInteger greenCount = 0;
+            uint64_t redRowTotal = 0;
+            uint64_t greenRowTotal = 0;
+            for (size_t row = 0; row < _pixelHeight; row++) {
+                if (row >= scanBandHeight && row < _pixelHeight - scanBandHeight) {
+                    continue;
+                }
+                uint8_t *pixel = bytes + row * bytesPerRow;
+                for (size_t column = 0; column < scanWidth; column++, pixel += 4) {
+                    BOOL isRed = pixel[2] > 180 && pixel[2] > pixel[1] * 2 && pixel[2] > pixel[0] * 2;
+                    BOOL isGreen = pixel[1] > 100 && pixel[1] > pixel[2] * 2 && pixel[1] > pixel[0] * 2;
+                    if (isRed) {
+                        redCount++;
+                        redRowTotal += row;
+                    } else if (isGreen) {
+                        greenCount++;
+                        greenRowTotal += row;
+                    }
+                }
+            }
+            NSUInteger minimumMarkerPixels = MAX(16, (NSUInteger)floor(30.0 * _captureScale * _captureScale));
+            double redRow = redCount > 0 ? (double)redRowTotal / redCount : -1.0;
+            double greenRow = greenCount > 0 ? (double)greenRowTotal / greenCount : -1.0;
+            if (redCount >= minimumMarkerPixels && greenCount >= minimumMarkerPixels) {
+                _textureYFlipped = redRow > greenRow;
                 _orientationCalibrated = YES;
                 _orientationFallbackUsed = NO;
             } else {
-                _textureYFlipped = YES;
+                _textureYFlipped = NO;
                 _orientationFallbackUsed = YES;
             }
             @synchronized(WBRealtimeGlassRenderer.class) {
                 WBRealtimeTextureYFlipped = _textureYFlipped;
                 WBRealtimeOrientationCalibrated = _orientationCalibrated;
                 WBRealtimeOrientationFallbackUsed = _orientationFallbackUsed;
+                WBRealtimeRedMarkerPixels = redCount;
+                WBRealtimeGreenMarkerPixels = greenCount;
+                WBRealtimeRedMarkerRow = redRow;
+                WBRealtimeGreenMarkerRow = greenRow;
             }
         }
     } @catch (__unused NSException *exception) {
@@ -534,6 +635,8 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             reuseCount = ++WBRealtimeBackdropReuseCount;
         }
     }
+    BOOL recordSurfaceFrames = capturedThisFrame || reuseCount % 120 == 0;
+    NSMutableArray<NSDictionary *> *surfaceFrames = recordSurfaceFrames ? [NSMutableArray arrayWithCapacity:renderers.count] : nil;
     id<MTLTexture> backdrop = _cvTexture ? CVMetalTextureGetTexture(_cvTexture) : nil;
     id<MTLCommandBuffer> commandBuffer = backdrop ? [self.commandQueue commandBuffer] : nil;
     if (!commandBuffer) {
@@ -622,6 +725,9 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
         WBRealtimeLastCaptureScale = _captureScale;
         WBRealtimeLastPixelWidth = _pixelWidth;
         WBRealtimeLastPixelHeight = _pixelHeight;
+        if (surfaceFrames) {
+            WBRealtimeLastSurfaceFrames = [surfaceFrames copy];
+        }
     }
     if (capturedThisFrame || reuseCount % 120 == 0) {
         WBRealtimeWriteDiagnostics(renderers.count);
@@ -654,8 +760,15 @@ static void WBRealtimeWriteDiagnostics(NSUInteger activeCount) {
             @"textureYFlipped": @(WBRealtimeTextureYFlipped),
             @"orientationCalibrated": @(WBRealtimeOrientationCalibrated),
             @"orientationFallbackUsed": @(WBRealtimeOrientationFallbackUsed),
+            @"redMarkerPixels": @(WBRealtimeRedMarkerPixels),
+            @"greenMarkerPixels": @(WBRealtimeGreenMarkerPixels),
+            @"redMarkerRow": @(WBRealtimeRedMarkerRow),
+            @"greenMarkerRow": @(WBRealtimeGreenMarkerRow),
+            @"lastSurfaceFrames": WBRealtimeLastSurfaceFrames,
+            @"captureSourceClass": WBRealtimeCaptureSourceClass,
+            @"captureSourceFrame": WBRealtimeCaptureSourceFrame,
             @"capturePolicy": WBRealtimeCapturePolicy,
-            @"samplingMode": @"cached-shared-window-backdrop-live-metal-uv-sdf"
+            @"samplingMode": @"isolated-wallpaper-or-window-backdrop-live-metal-uv-sdf"
         };
     }
 }
