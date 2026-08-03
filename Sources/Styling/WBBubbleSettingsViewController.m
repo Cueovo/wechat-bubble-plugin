@@ -1,5 +1,6 @@
 #import "WBBubbleSettingsViewController.h"
 #import "WBBubblePreferences.h"
+#import <QuartzCore/QuartzCore.h>
 #import <math.h>
 
 typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
