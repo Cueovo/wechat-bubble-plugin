@@ -1,6 +1,7 @@
 #import "WBBubbleSettingsViewController.h"
 #import "WBBubblePreferences.h"
 #import <math.h>
+#import <objc/message.h>
 
 typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
     WBSettingsColorTargetOutgoing = 0,
@@ -102,9 +103,9 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
     if (indexPath.section == 1) {
         self.colorTarget = indexPath.row == 0 ? WBSettingsColorTargetOutgoing : WBSettingsColorTargetIncoming;
         UIColorPickerViewController *picker = [[UIColorPickerViewController alloc] init];
-        picker.delegate = self;
-        picker.supportsAlpha = NO;
-        picker.selectedColor = [WBBubblePreferences fillColorForOutgoing:self.colorTarget == WBSettingsColorTargetOutgoing];
+        ((void (*)(id, SEL, id))objc_msgSend)(picker, NSSelectorFromString(@"setDelegate:"), self);
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(picker, NSSelectorFromString(@"setSupportsAlpha:"), NO);
+        ((void (*)(id, SEL, id))objc_msgSend)(picker, NSSelectorFromString(@"setSelectedColor:"), [WBBubblePreferences fillColorForOutgoing:self.colorTarget == WBSettingsColorTargetOutgoing]);
         [self presentViewController:picker animated:YES completion:nil];
     } else if (indexPath.section == 3) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"恢复默认设置" message:@"颜色和外观参数将恢复为默认值。" preferredStyle:UIAlertControllerStyleAlert];
@@ -135,19 +136,21 @@ typedef NS_ENUM(NSInteger, WBSettingsColorTarget) {
 }
 
 - (void)colorPickerViewControllerDidFinish:(UIColorPickerViewController *)viewController {
+    UIColor *selectedColor = ((id (*)(id, SEL))objc_msgSend)(viewController, NSSelectorFromString(@"selectedColor"));
     if (self.colorTarget == WBSettingsColorTargetOutgoing) {
-        [WBBubblePreferences setOutgoingColor:viewController.selectedColor];
+        [WBBubblePreferences setOutgoingColor:selectedColor];
     } else {
-        [WBBubblePreferences setIncomingColor:viewController.selectedColor];
+        [WBBubblePreferences setIncomingColor:selectedColor];
     }
     [self.tableView reloadData];
 }
 
 - (void)colorPickerViewControllerDidSelectColor:(UIColorPickerViewController *)viewController {
+    UIColor *selectedColor = ((id (*)(id, SEL))objc_msgSend)(viewController, NSSelectorFromString(@"selectedColor"));
     if (self.colorTarget == WBSettingsColorTargetOutgoing) {
-        [WBBubblePreferences setOutgoingColor:viewController.selectedColor];
+        [WBBubblePreferences setOutgoingColor:selectedColor];
     } else {
-        [WBBubblePreferences setIncomingColor:viewController.selectedColor];
+        [WBBubblePreferences setIncomingColor:selectedColor];
     }
 }
 
