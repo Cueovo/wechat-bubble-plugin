@@ -15,6 +15,7 @@ typedef NS_ENUM(NSInteger, WBSDFApplicationResult) {
 + (NSDictionary<NSString *, id> *)capabilitySnapshot;
 
 - (WBSDFApplicationResult)applyToEffectView:(UIVisualEffectView *)effectView path:(UIBezierPath *)path bounds:(CGRect)bounds cacheKey:(NSString *)cacheKey;
+- (BOOL)requiresFilterReapplication;
 - (void)reset;
 
 @end

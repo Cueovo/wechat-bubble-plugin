@@ -15,6 +15,8 @@ static BOOL WBSDFRuntimeApplicationSucceeded;
 static BOOL WBSDFRuntimeSnapshotScheduled;
 static NSUInteger WBSDFRuntimeSnapshotGeneration;
 static NSUInteger WBSDFRuntimeSnapshotRetryCount;
+static NSArray<NSString *> *WBSDFLastOriginalFilterTypes;
+static NSArray<NSString *> *WBSDFLastInstalledFilterTypes;
 
 static id WBSDFCreateFilter(NSString *type) {
     Class filterClass = NSClassFromString(@"CAFilter");
@@ -29,6 +31,20 @@ static NSArray<NSString *> *WBSDFInputKeys(id filter) {
     SEL selector = NSSelectorFromString(@"inputKeys");
     id keys = [filter respondsToSelector:selector] ? ((id (*)(id, SEL))objc_msgSend)(filter, selector) : nil;
     return [keys isKindOfClass:NSArray.class] ? keys : nil;
+}
+
+static NSString *WBSDFFilterType(id filter) {
+    SEL selector = NSSelectorFromString(@"type");
+    id type = [filter respondsToSelector:selector] ? ((id (*)(id, SEL))objc_msgSend)(filter, selector) : nil;
+    return [type isKindOfClass:NSString.class] ? type : NSStringFromClass([filter class]);
+}
+
+static NSArray<NSString *> *WBSDFFilterTypes(NSArray *filters) {
+    NSMutableArray<NSString *> *types = [NSMutableArray arrayWithCapacity:filters.count];
+    for (id filter in filters) {
+        [types addObject:WBSDFFilterType(filter) ?: @"unknown"];
+    }
+    return [types copy];
 }
 
 static void WBSDFProbeCapability(void) {
@@ -68,9 +84,12 @@ static void WBSDFScheduleRuntimeSnapshot(void) {
         scheduledGeneration = WBSDFRuntimeSnapshotGeneration;
         runtime = @{
             @"applicationSucceeded": @(WBSDFRuntimeApplicationSucceeded),
+            @"filterChainInstalled": @(WBSDFRuntimeApplicationSucceeded),
             @"disabledForProcess": @(WBSDFDisabledForProcess),
             @"lastRuntimeFailure": WBSDFLastRuntimeFailure,
             @"runtimeFailureCount": @(WBSDFRuntimeFailureCount),
+            @"originalFilterTypes": WBSDFLastOriginalFilterTypes ?: @[],
+            @"installedFilterTypes": WBSDFLastInstalledFilterTypes ?: @[],
             @"updatedAt": NSDate.date
         };
     }
@@ -133,13 +152,13 @@ static NSCache<NSString *, UIImage *> *WBSDFImageCache(void) {
     return cache;
 }
 
-static NSMutableSet<NSString *> *WBSDFPendingKeys(void) {
-    static NSMutableSet<NSString *> *keys;
+static NSMutableDictionary<NSString *, NSHashTable<WBSDFDisplacementRenderer *> *> *WBSDFPendingRenderers(void) {
+    static NSMutableDictionary<NSString *, NSHashTable<WBSDFDisplacementRenderer *> *> *renderers;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        keys = [NSMutableSet set];
+        renderers = [NSMutableDictionary dictionary];
     });
-    return keys;
+    return renderers;
 }
 
 static dispatch_queue_t WBSDFGenerationQueue(void) {
@@ -358,7 +377,11 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
 @property (nonatomic, strong) CALayer *backdropLayer;
 @property (nonatomic, copy) NSArray *originalFilters;
 @property (nonatomic, copy) NSArray *installedFilters;
+@property (nonatomic, strong) id installedDisplacementFilter;
+@property (nonatomic, strong) id originalBackdropScale;
+@property (nonatomic, strong) id installedBackdropScale;
 @property (nonatomic, copy) NSString *installedImageCacheKey;
+@property (nonatomic, copy) NSString *pendingImageCacheKey;
 @property (nonatomic, assign) BOOL backdropRetryScheduled;
 @end
 
@@ -381,9 +404,12 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             @"reportedInputKeys": WBSDFReportedInputKeys ?: @[],
             @"inputValidationMode": @"guarded-kvc-runtime",
             @"applicationSucceeded": @(WBSDFRuntimeApplicationSucceeded),
+            @"filterChainInstalled": @(WBSDFRuntimeApplicationSucceeded),
             @"disabledForProcess": @(WBSDFDisabledForProcess),
             @"lastRuntimeFailure": WBSDFLastRuntimeFailure,
-            @"runtimeFailureCount": @(WBSDFRuntimeFailureCount)
+            @"runtimeFailureCount": @(WBSDFRuntimeFailureCount),
+            @"originalFilterTypes": WBSDFLastOriginalFilterTypes ?: @[],
+            @"installedFilterTypes": WBSDFLastInstalledFilterTypes ?: @[]
         };
     }
 }
@@ -395,15 +421,23 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
 }
 
 - (WBSDFApplicationResult)scheduleImageForPath:(UIBezierPath *)path bounds:(CGRect)bounds cacheKey:(NSString *)cacheKey effectView:(UIVisualEffectView *)effectView {
-    NSMutableSet<NSString *> *pendingKeys = WBSDFPendingKeys();
-    @synchronized(pendingKeys) {
-        if ([pendingKeys containsObject:cacheKey]) {
-            return WBSDFApplicationResultPending;
+    NSMutableDictionary<NSString *, NSHashTable<WBSDFDisplacementRenderer *> *> *pendingRenderers = WBSDFPendingRenderers();
+    BOOL shouldGenerate = NO;
+    self.effectView = effectView;
+    self.pendingImageCacheKey = cacheKey;
+    @synchronized(pendingRenderers) {
+        NSHashTable<WBSDFDisplacementRenderer *> *renderers = pendingRenderers[cacheKey];
+        if (!renderers) {
+            renderers = [NSHashTable weakObjectsHashTable];
+            pendingRenderers[cacheKey] = renderers;
+            shouldGenerate = YES;
         }
-        [pendingKeys addObject:cacheKey];
+        [renderers addObject:self];
+    }
+    if (!shouldGenerate) {
+        return WBSDFApplicationResultPending;
     }
     UIBezierPath *pathCopy = [path copy];
-    __weak UIVisualEffectView *weakEffectView = effectView;
     dispatch_async(WBSDFGenerationQueue(), ^{
         UIImage *image = WBSDFCreateDisplacementImage(pathCopy, bounds);
         if (image) {
@@ -412,12 +446,18 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         } else {
             WBSDFRecordRuntimeFailure(@"sdf-image-generation-failed", YES);
         }
-        @synchronized(pendingKeys) {
-            [pendingKeys removeObject:cacheKey];
+        NSArray<WBSDFDisplacementRenderer *> *waitingRenderers;
+        @synchronized(pendingRenderers) {
+            waitingRenderers = [pendingRenderers[cacheKey] allObjects];
+            [pendingRenderers removeObjectForKey:cacheKey];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            UIVisualEffectView *strongEffectView = weakEffectView;
-            [strongEffectView.superview setNeedsLayout];
+            for (WBSDFDisplacementRenderer *renderer in waitingRenderers) {
+                if ([renderer.pendingImageCacheKey isEqualToString:cacheKey]) {
+                    renderer.pendingImageCacheKey = nil;
+                    [renderer.effectView.superview setNeedsLayout];
+                }
+            }
         });
     });
     return WBSDFApplicationResultPending;
@@ -432,6 +472,7 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
     if (!image) {
         return [self scheduleImageForPath:path bounds:bounds cacheKey:imageCacheKey effectView:effectView];
     }
+    self.pendingImageCacheKey = nil;
     CALayer *backdropLayer = WBSDFFindBackdropLayer(effectView);
     if (!backdropLayer) {
         if (!self.backdropRetryScheduled) {
@@ -465,11 +506,11 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
         applicationStep = @"set-input-mask-image";
         [displacement setValue:(__bridge id)image.CGImage forKey:@"inputMaskImage"];
         applicationStep = @"set-input-amount";
-        [displacement setValue:@(11.0) forKey:@"inputAmount"];
+        [displacement setValue:@(20.0) forKey:@"inputAmount"];
         NSArray *baseFilters = self.originalFilters;
         if (self.backdropLayer != backdropLayer || !self.installedFilters || ![currentFilters isEqual:self.installedFilters]) {
             NSMutableArray *externalFilters = [currentFilters isKindOfClass:NSArray.class] ? [currentFilters mutableCopy] : [NSMutableArray array];
-            id previousDisplacement = self.installedFilters.firstObject;
+            id previousDisplacement = self.installedDisplacementFilter;
             if (previousDisplacement) {
                 for (NSInteger index = (NSInteger)externalFilters.count - 1; index >= 0; index--) {
                     if (externalFilters[(NSUInteger)index] == previousDisplacement) {
@@ -481,17 +522,31 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
             self.originalFilters = baseFilters;
         }
         NSMutableArray *filters = [NSMutableArray arrayWithObject:displacement];
-        [filters addObjectsFromArray:baseFilters];
+        if (self.backdropLayer != backdropLayer) {
+            @try {
+                self.originalBackdropScale = [backdropLayer valueForKey:@"scale"];
+            } @catch (__unused NSException *exception) {
+                self.originalBackdropScale = nil;
+            }
+        }
         applicationStep = @"install-backdrop-filters";
         [backdropLayer setValue:filters forKey:@"filters"];
+        NSNumber *backdropScale = @(UIScreen.mainScreen.scale);
         @try {
-            [backdropLayer setValue:@(UIScreen.mainScreen.scale) forKey:@"scale"];
+            [backdropLayer setValue:backdropScale forKey:@"scale"];
+            self.installedBackdropScale = backdropScale;
         } @catch (__unused NSException *exception) {
+            self.installedBackdropScale = nil;
         }
         self.effectView = effectView;
         self.backdropLayer = backdropLayer;
         self.installedFilters = [filters copy];
+        self.installedDisplacementFilter = displacement;
         self.installedImageCacheKey = imageCacheKey;
+        @synchronized(WBSDFDisplacementRenderer.class) {
+            WBSDFLastOriginalFilterTypes = WBSDFFilterTypes(baseFilters);
+            WBSDFLastInstalledFilterTypes = WBSDFFilterTypes(filters);
+        }
         WBSDFRecordRuntimeSuccess();
         return WBSDFApplicationResultApplied;
     } @catch (__unused NSException *exception) {
@@ -501,11 +556,52 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
     }
 }
 
+- (BOOL)requiresFilterReapplication {
+    if (self.pendingImageCacheKey || self.backdropRetryScheduled) {
+        return NO;
+    }
+    if (!self.backdropLayer || !self.installedFilters) {
+        return YES;
+    }
+    @try {
+        id currentFilters = [self.backdropLayer valueForKey:@"filters"];
+        return ![currentFilters isEqual:self.installedFilters];
+    } @catch (__unused NSException *exception) {
+        return YES;
+    }
+}
+
 - (void)reset {
+    NSString *pendingImageCacheKey = self.pendingImageCacheKey;
+    if (pendingImageCacheKey.length > 0) {
+        NSMutableDictionary<NSString *, NSHashTable<WBSDFDisplacementRenderer *> *> *pendingRenderers = WBSDFPendingRenderers();
+        @synchronized(pendingRenderers) {
+            [pendingRenderers[pendingImageCacheKey] removeObject:self];
+        }
+    }
     @try {
         id currentFilters = [self.backdropLayer valueForKey:@"filters"];
         if (self.backdropLayer && self.installedFilters && [currentFilters isEqual:self.installedFilters]) {
             [self.backdropLayer setValue:self.originalFilters ?: @[] forKey:@"filters"];
+        } else if (self.backdropLayer && self.installedDisplacementFilter && [currentFilters isKindOfClass:NSArray.class]) {
+            NSMutableArray *externalFilters = [currentFilters mutableCopy];
+            BOOL removed = NO;
+            for (NSInteger index = (NSInteger)externalFilters.count - 1; index >= 0; index--) {
+                if (externalFilters[(NSUInteger)index] == self.installedDisplacementFilter) {
+                    [externalFilters removeObjectAtIndex:(NSUInteger)index];
+                    removed = YES;
+                }
+            }
+            if (removed) {
+                [self.backdropLayer setValue:externalFilters forKey:@"filters"];
+            }
+        }
+    } @catch (__unused NSException *exception) {
+    }
+    @try {
+        id currentScale = [self.backdropLayer valueForKey:@"scale"];
+        if (self.backdropLayer && self.installedBackdropScale && self.originalBackdropScale && [currentScale isEqual:self.installedBackdropScale]) {
+            [self.backdropLayer setValue:self.originalBackdropScale forKey:@"scale"];
         }
     } @catch (__unused NSException *exception) {
     }
@@ -513,7 +609,11 @@ static CALayer *WBSDFFindBackdropLayer(UIView *view) {
     self.backdropLayer = nil;
     self.originalFilters = nil;
     self.installedFilters = nil;
+    self.installedDisplacementFilter = nil;
+    self.originalBackdropScale = nil;
+    self.installedBackdropScale = nil;
     self.installedImageCacheKey = nil;
+    self.pendingImageCacheKey = nil;
     self.backdropRetryScheduled = NO;
 }
 

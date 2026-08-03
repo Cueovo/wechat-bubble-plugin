@@ -79,6 +79,19 @@
 2. 打开有可见聊天背景的文字会话并等待首批异步 SDF 生成；重新导出诊断，确认 `disabledForProcess=false`、`lastRuntimeFailure=none`。
 3. 若再次回退基础兼容，提供格式 14 诊断；精确失败步骤将决定是否需要替换键名、图像值类型或 backdrop filter 安装方式。
 
+## 0.6.2 折射可见性与滚动性能修正
+
+- 0.6.1 真机确认 `displacementMap` 已实际安装且没有运行时失败，但原滤镜顺序会在位移后继续执行 UIKit 高斯模糊，使折射被磨砂效果冲淡。
+- SDF 活跃时临时使用只包含 `displacementMap` 的最小 backdrop 滤镜链，避免未知 UIKit 材质滤镜继续产生磨砂；退出或降级时仍按事务规则恢复完整原滤镜链和原始 scale，若外部链已变化则只移除插件持有的位移实例。
+- 位移强度从 11 调整到 20，并在格式 15 诊断中记录 `originalFilterTypes` 和 `installedFilterTypes`，用于确认真机最终滤镜顺序。
+- Cell 重复布局不再无条件同步执行 overlay layout；只有尺寸、方向、尾巴、分段、主题或实际 backdrop 滤镜链变化时才重建路径并重新安装滤镜，降低滚动期间主线程负担。
+
+### 0.6.2 真机复测
+
+1. 检查 `styling.sdfRuntime.filterChainInstalled=true`，且 `installedFilterTypes` 仅包含 `displacementMap`；该字段只证明滤镜链安装成功，最终折射仍以画面为准。
+2. 在高细节聊天背景上确认气泡边缘发生明显局部弯曲，中心区域保持接近透明，不再主要表现为均匀磨砂。
+3. 快速上下滚动相同会话并与 0.6.1 对比掉帧；覆盖相同尺寸 Cell 复用、长消息和连续消息分段。
+
 ## 实施步骤
 
 1. 实现独立命名空间的 PreferenceStore。

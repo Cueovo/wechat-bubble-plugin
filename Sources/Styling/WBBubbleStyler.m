@@ -383,6 +383,11 @@ static char WBInternalArtworkUpdateKey;
         objc_setAssociatedObject(bubbleView, &WBBubbleStyleStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     WBBubbleOverlayView *overlayView = state.overlayView;
+    NSString *themeIdentifier = [WBBubbleThemeProvider themeIdentifier];
+    BOOL needsOverlayLayout = !CGRectEqualToRect(overlayView.frame, bubbleView.bounds) || overlayView.direction != direction || overlayView.tailSide != tailSide || overlayView.segmentPosition != segmentPosition || ![state.themeIdentifier isEqualToString:themeIdentifier];
+    if ([themeIdentifier containsString:@"compatibility-sdf-displacement"] && [overlayView.sdfRenderer requiresFilterReapplication]) {
+        needsOverlayLayout = YES;
+    }
     if ([bubbleView isKindOfClass:UIImageView.class]) {
         if ([WBBubbleThemeProvider usesGlassMaterial]) {
             [self hideOriginalArtworkFromImageView:(UIImageView *)bubbleView state:state];
@@ -393,8 +398,11 @@ static char WBInternalArtworkUpdateKey;
     if (overlayView.superview != bubbleView) {
         [overlayView removeFromSuperview];
         [bubbleView insertSubview:overlayView atIndex:0];
+        needsOverlayLayout = YES;
     }
-    overlayView.frame = bubbleView.bounds;
+    if (!CGRectEqualToRect(overlayView.frame, bubbleView.bounds)) {
+        overlayView.frame = bubbleView.bounds;
+    }
     overlayView.direction = direction;
     overlayView.tailSide = tailSide;
     overlayView.segmentPosition = segmentPosition;
@@ -402,9 +410,11 @@ static char WBInternalArtworkUpdateKey;
         state.originalMask = bubbleView.layer.mask;
         [bubbleView.layer setMask:overlayView.maskLayer];
     }
-    [overlayView setNeedsLayout];
-    [overlayView layoutIfNeeded];
-    state.themeIdentifier = [WBBubbleThemeProvider themeIdentifier];
+    if (needsOverlayLayout) {
+        [overlayView setNeedsLayout];
+        [overlayView layoutIfNeeded];
+    }
+    state.themeIdentifier = themeIdentifier;
     return YES;
 }
 
